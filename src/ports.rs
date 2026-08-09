@@ -1,6 +1,8 @@
 use std::net::TcpListener;
 
-use anyhow::{Context, Result};
+use anyhow::{Result, bail};
+
+pub const MAX_PORT_FALLBACKS: u16 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Direction {
@@ -40,13 +42,18 @@ impl Tunnel {
 }
 
 pub fn available_local_port(preferred: u16) -> Result<(u16, TcpListener)> {
-    if let Ok(listener) = TcpListener::bind(("127.0.0.1", preferred)) {
-        return Ok((preferred, listener));
+    for offset in 0..=MAX_PORT_FALLBACKS {
+        let Some(port) = preferred.checked_add(offset) else {
+            break;
+        };
+        if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+            return Ok((port, listener));
+        }
     }
-    let listener =
-        TcpListener::bind(("127.0.0.1", 0)).context("cannot allocate a local TCP port")?;
-    let port = listener.local_addr()?.port();
-    Ok((port, listener))
+    bail!(
+        "ports {preferred} through {} are unavailable",
+        preferred.saturating_add(MAX_PORT_FALLBACKS)
+    )
 }
 
 pub fn parse_ss_ports(output: &str, include_loopback: bool) -> Vec<u16> {
@@ -81,6 +88,22 @@ mod tests {
         let busy = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let preferred = busy.local_addr().unwrap().port();
         let (actual, _reservation) = available_local_port(preferred).unwrap();
-        assert_ne!(actual, preferred);
+        assert_eq!(actual, preferred + 1);
+    }
+
+    #[test]
+    fn gives_up_after_five_fallbacks() {
+        let base = (20_000..60_000)
+            .find(|base| {
+                (0..=MAX_PORT_FALLBACKS)
+                    .all(|offset| TcpListener::bind(("127.0.0.1", base + offset)).is_ok())
+            })
+            .expect("six consecutive test ports");
+        let listeners = (0..=MAX_PORT_FALLBACKS)
+            .map(|offset| TcpListener::bind(("127.0.0.1", base + offset)).unwrap())
+            .collect::<Vec<_>>();
+        let error = available_local_port(base).unwrap_err();
+        assert!(error.to_string().contains("are unavailable"));
+        drop(listeners);
     }
 }
