@@ -20,6 +20,9 @@ pub struct Tunnel {
     pub present: bool,
     pub missing_scans: u8,
     pub manual_off: bool,
+    pub requested_port: u16,
+    pub label: String,
+    pub discovered: bool,
 }
 
 impl Tunnel {
@@ -33,6 +36,9 @@ impl Tunnel {
             present: true,
             missing_scans: 0,
             manual_off: false,
+            requested_port: remote_port,
+            label: String::new(),
+            discovered: true,
         }
     }
 
@@ -46,7 +52,33 @@ impl Tunnel {
             present: true,
             missing_scans: 0,
             manual_off: false,
+            requested_port: local_port,
+            label: String::new(),
+            discovered: false,
         }
+    }
+
+    pub fn manual_local(remote_port: u16, local_port: u16, label: String) -> Self {
+        Self {
+            direction: Direction::Local,
+            source_port: remote_port,
+            bind_port: None,
+            enabled: false,
+            error: None,
+            present: true,
+            missing_scans: 0,
+            manual_off: false,
+            requested_port: local_port,
+            label,
+            discovered: false,
+        }
+    }
+
+    pub fn manual_reverse(local_port: u16, remote_port: u16, label: String) -> Self {
+        let mut tunnel = Self::reverse(local_port);
+        tunnel.requested_port = remote_port;
+        tunnel.label = label;
+        tunnel
     }
 }
 

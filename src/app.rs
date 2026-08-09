@@ -1,5 +1,5 @@
 use std::{
-    io,
+    io::{self, Write},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -9,7 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -25,7 +26,7 @@ use ratatui::{
 };
 
 use crate::{
-    ports::{Direction, Tunnel, available_local_port},
+    ports::{Direction, MAX_PORT_FALLBACKS, Tunnel, available_local_port},
     ssh::SshSession,
 };
 
@@ -54,6 +55,12 @@ pub fn run(
         {
             enable(session, tunnel, &mut message);
         }
+    }
+    for tunnel in tunnels
+        .iter_mut()
+        .filter(|t| t.direction == Direction::Reverse)
+    {
+        enable(session, tunnel, &mut message);
     }
 
     enable_raw_mode()?;
@@ -115,6 +122,7 @@ pub fn run(
                 });
                 Row::new(vec![
                     Cell::from(direction),
+                    Cell::from(if t.label.is_empty() { "—" } else { &t.label }),
                     Cell::from(t.source_port.to_string()),
                     Cell::from(bind),
                     Cell::from(status),
@@ -129,13 +137,14 @@ pub fn run(
                 rows,
                 [
                     Constraint::Length(12),
+                    Constraint::Length(18),
                     Constraint::Length(12),
                     Constraint::Length(12),
                     Constraint::Min(12),
                 ],
             )
             .header(
-                Row::new(["Direction", "Service port", "Bind port", "Status"])
+                Row::new(["Direction", "Label", "Service port", "Bind port", "Status"])
                     .style(Style::default().add_modifier(Modifier::BOLD)),
             )
             .block(
@@ -148,7 +157,7 @@ pub fn run(
             frame.render_stateful_widget(table, areas[1], &mut state);
             frame.render_widget(
                 Paragraph::new(Line::from(format!(
-                    "↑/↓ select  Space toggle  r refresh  q quit  │ scan {interval_seconds}s │ {message}"
+                    "↑/↓ Space toggle  a add -L  v add -R  e edit  d delete  c copy  r scan  q quit │ {message}"
                 )))
                 .block(Block::default().borders(Borders::ALL)),
                 areas[2],
@@ -173,6 +182,40 @@ pub fn run(
                     KeyCode::Char(' ') | KeyCode::Enter => {
                         if let Some(i) = state.selected() {
                             toggle(session, &mut tunnels[i], &mut message);
+                        }
+                    }
+                    KeyCode::Char('a') => match prompt_tunnel(&mut terminal, Direction::Local) {
+                        Ok(Some(mut tunnel)) => {
+                            enable(session, &mut tunnel, &mut message);
+                            tunnels.push(tunnel);
+                            state.select(Some(tunnels.len() - 1));
+                        }
+                        Ok(None) => message = "add cancelled".into(),
+                        Err(error) => message = format!("input error: {error:#}"),
+                    },
+                    KeyCode::Char('v') => match prompt_tunnel(&mut terminal, Direction::Reverse) {
+                        Ok(Some(mut tunnel)) => {
+                            enable(session, &mut tunnel, &mut message);
+                            tunnels.push(tunnel);
+                            state.select(Some(tunnels.len() - 1));
+                        }
+                        Ok(None) => message = "add cancelled".into(),
+                        Err(error) => message = format!("input error: {error:#}"),
+                    },
+                    KeyCode::Char('e') => {
+                        if let Some(i) = state.selected() {
+                            edit_tunnel(session, &mut terminal, &mut tunnels[i], &mut message)?;
+                        }
+                    }
+                    KeyCode::Char('d') => {
+                        if let Some(i) = state.selected() {
+                            delete_tunnel(session, &mut tunnels, i, &mut message);
+                            state.select((!tunnels.is_empty()).then_some(i.min(tunnels.len() - 1)));
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        if let Some(tunnel) = state.selected().and_then(|i| tunnels.get(i)) {
+                            copy_address(tunnel, &mut message);
                         }
                     }
                     KeyCode::Char('r') => match session.discover_ports(include_loopback) {
@@ -232,16 +275,28 @@ fn toggle(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
 
 fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
     tunnel.error = None;
-    let preferred = tunnel.source_port;
+    let preferred = tunnel.requested_port;
     if tunnel.direction == Direction::Reverse {
-        match session.forward(Direction::Reverse, preferred, tunnel.source_port) {
-            Ok(()) => {
-                tunnel.bind_port = Some(preferred);
-                tunnel.enabled = true;
-                *message = format!("reverse port {preferred} enabled");
+        let mut last_error = None;
+        for offset in 0..=MAX_PORT_FALLBACKS {
+            let Some(port) = preferred.checked_add(offset) else {
+                break;
+            };
+            match session.forward(Direction::Reverse, port, tunnel.source_port) {
+                Ok(()) => {
+                    tunnel.bind_port = Some(port);
+                    tunnel.enabled = true;
+                    *message = format!("reverse port {port} enabled");
+                    return;
+                }
+                Err(error) => last_error = Some(error),
             }
-            Err(e) => tunnel.error = Some(format!("forward failed: {e:#}")),
         }
+        tunnel.error = Some(format!(
+            "ports {preferred}..{} failed: {:#}",
+            preferred.saturating_add(MAX_PORT_FALLBACKS),
+            last_error.expect("at least one reverse port attempt")
+        ));
         return;
     }
 
@@ -263,6 +318,175 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
         }
         Err(e) => tunnel.error = Some(format!("allocation failed: {e:#}")),
     }
+}
+
+type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+
+fn prompt_tunnel(terminal: &mut AppTerminal, direction: Direction) -> Result<Option<Tunnel>> {
+    prompt_tunnel_with_defaults(terminal, direction, None)
+}
+
+fn prompt_tunnel_with_defaults(
+    terminal: &mut AppTerminal,
+    direction: Direction,
+    defaults: Option<&Tunnel>,
+) -> Result<Option<Tunnel>> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    let result = (|| -> Result<Option<Tunnel>> {
+        println!(
+            "autotun — add {} tunnel (enter q to cancel)",
+            if direction == Direction::Local {
+                "local (-L)"
+            } else {
+                "reverse (-R)"
+            }
+        );
+        let source_name = if direction == Direction::Local {
+            "Remote service port"
+        } else {
+            "Local service port"
+        };
+        let source = prompt_port(source_name, defaults.map(|t| t.source_port))?;
+        let Some(source) = source else {
+            return Ok(None);
+        };
+        let bind_name = if direction == Direction::Local {
+            "Local bind port"
+        } else {
+            "Remote bind port"
+        };
+        let requested = prompt_port(
+            bind_name,
+            Some(defaults.map_or(source, |t| t.requested_port)),
+        )?;
+        let Some(requested) = requested else {
+            return Ok(None);
+        };
+        let label = prompt_text("Label", defaults.map(|t| t.label.as_str()).unwrap_or(""))?;
+        let tunnel = if direction == Direction::Local {
+            Tunnel::manual_local(source, requested, label)
+        } else {
+            Tunnel::manual_reverse(source, requested, label)
+        };
+        Ok(Some(tunnel))
+    })();
+
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    enable_raw_mode()?;
+    terminal.clear()?;
+    result
+}
+
+fn prompt_port(name: &str, default: Option<u16>) -> Result<Option<u16>> {
+    loop {
+        match default {
+            Some(port) => print!("{name} [{port}]: "),
+            None => print!("{name}: "),
+        }
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if input.eq_ignore_ascii_case("q") {
+            return Ok(None);
+        }
+        if input.is_empty() {
+            if let Some(port) = default {
+                return Ok(Some(port));
+            }
+        } else if let Ok(port) = input.parse::<u16>()
+            && port > 0
+        {
+            return Ok(Some(port));
+        }
+        println!("Enter a TCP port from 1 to 65535.");
+    }
+}
+
+fn prompt_text(name: &str, default: &str) -> Result<String> {
+    print!(
+        "{name} [{}]: ",
+        if default.is_empty() { "none" } else { default }
+    );
+    io::stdout().flush()?;
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    Ok(if input.is_empty() {
+        default.to_owned()
+    } else {
+        input.to_owned()
+    })
+}
+
+fn edit_tunnel(
+    session: &SshSession,
+    terminal: &mut AppTerminal,
+    tunnel: &mut Tunnel,
+    message: &mut String,
+) -> Result<()> {
+    let was_enabled = tunnel.enabled;
+    let replacement = prompt_tunnel_with_defaults(terminal, tunnel.direction, Some(tunnel))?;
+    let Some(mut replacement) = replacement else {
+        *message = "edit cancelled".into();
+        return Ok(());
+    };
+    if was_enabled {
+        let bind = tunnel
+            .bind_port
+            .context("enabled tunnel has no bind port")?;
+        session.cancel(tunnel.direction, bind, tunnel.source_port)?;
+    }
+    replacement.discovered = tunnel.discovered;
+    replacement.present = tunnel.present;
+    if was_enabled {
+        enable(session, &mut replacement, message);
+    } else {
+        replacement.manual_off = tunnel.manual_off;
+        *message = "tunnel updated".into();
+    }
+    *tunnel = replacement;
+    Ok(())
+}
+
+fn delete_tunnel(
+    session: &SshSession,
+    tunnels: &mut Vec<Tunnel>,
+    index: usize,
+    message: &mut String,
+) {
+    if tunnels[index].enabled {
+        let tunnel = &tunnels[index];
+        let bind = tunnel.bind_port.expect("enabled tunnel has bind port");
+        if let Err(error) = session.cancel(tunnel.direction, bind, tunnel.source_port) {
+            tunnels[index].error = Some(format!("delete failed: {error:#}"));
+            return;
+        }
+    }
+    if tunnels[index].discovered {
+        tunnels[index].enabled = false;
+        tunnels[index].manual_off = true;
+        tunnels[index].error = None;
+        *message = "discovered tunnel ignored for this session".into();
+    } else {
+        tunnels.remove(index);
+        *message = "manual tunnel deleted".into();
+    }
+}
+
+fn copy_address(tunnel: &Tunnel, message: &mut String) {
+    let Some(port) = tunnel.bind_port else {
+        *message = "tunnel has no active bind address".into();
+        return;
+    };
+    let address = format!("127.0.0.1:{port}");
+    let encoded = STANDARD.encode(&address);
+    print!("\x1b]52;c;{encoded}\x07");
+    let _ = io::stdout().flush();
+    *message = format!("copied {address}");
 }
 
 fn reconcile_scan(
