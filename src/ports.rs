@@ -17,6 +17,9 @@ pub struct Tunnel {
     pub bind_port: Option<u16>,
     pub enabled: bool,
     pub error: Option<String>,
+    pub present: bool,
+    pub missing_scans: u8,
+    pub manual_off: bool,
 }
 
 impl Tunnel {
@@ -27,6 +30,9 @@ impl Tunnel {
             bind_port: None,
             enabled: false,
             error: None,
+            present: true,
+            missing_scans: 0,
+            manual_off: false,
         }
     }
 
@@ -37,6 +43,9 @@ impl Tunnel {
             bind_port: None,
             enabled: false,
             error: None,
+            present: true,
+            missing_scans: 0,
+            manual_off: false,
         }
     }
 }
@@ -64,7 +73,8 @@ pub fn parse_ss_ports(output: &str, include_loopback: bool) -> Vec<u16> {
             if !include_loopback && (addr.starts_with("127.") || addr.starts_with("[::1]")) {
                 return None;
             }
-            addr.rsplit(':').next()?.parse().ok()
+            let port = addr.rsplit(':').next()?.parse::<u16>().ok()?;
+            (port > 1024).then_some(port)
         })
         .collect::<Vec<_>>();
     ports.sort_unstable();
@@ -79,8 +89,8 @@ mod tests {
     #[test]
     fn parses_and_deduplicates_ss() {
         let input = "LISTEN 0 128 127.0.0.1:3000\nLISTEN 0 128 0.0.0.0:22\nLISTEN 0 128 [::]:22\n";
-        assert_eq!(parse_ss_ports(input, true), vec![22, 3000]);
-        assert_eq!(parse_ss_ports(input, false), vec![22]);
+        assert_eq!(parse_ss_ports(input, true), vec![3000]);
+        assert!(parse_ss_ports(input, false).is_empty());
     }
 
     #[test]

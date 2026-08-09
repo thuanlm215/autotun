@@ -24,6 +24,14 @@ struct Cli {
     /// Include listeners bound only to remote loopback (enabled by default)
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     include_loopback: bool,
+
+    /// Discover ports but do not forward them automatically
+    #[arg(long)]
+    no_auto_forward: bool,
+
+    /// Seconds between remote listener scans
+    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u64).range(1..))]
+    interval: u64,
 }
 
 fn main() -> Result<()> {
@@ -31,5 +39,11 @@ fn main() -> Result<()> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let socket = std::env::temp_dir().join(format!("autotun-{}-{nonce}.sock", std::process::id()));
     let mut session = ssh::SshSession::connect(cli.destination, socket, cli.ssh_args)?;
-    app::run(&mut session, &cli.reverse_ports, cli.include_loopback)
+    app::run(
+        &mut session,
+        &cli.reverse_ports,
+        cli.include_loopback,
+        !cli.no_auto_forward,
+        cli.interval,
+    )
 }
