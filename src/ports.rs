@@ -1,0 +1,86 @@
+use std::net::TcpListener;
+
+use anyhow::{Context, Result};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Direction {
+    Local,
+    Reverse,
+}
+
+#[derive(Clone, Debug)]
+pub struct Tunnel {
+    pub direction: Direction,
+    pub source_port: u16,
+    pub bind_port: Option<u16>,
+    pub enabled: bool,
+    pub error: Option<String>,
+}
+
+impl Tunnel {
+    pub fn local(remote_port: u16) -> Self {
+        Self {
+            direction: Direction::Local,
+            source_port: remote_port,
+            bind_port: None,
+            enabled: false,
+            error: None,
+        }
+    }
+
+    pub fn reverse(local_port: u16) -> Self {
+        Self {
+            direction: Direction::Reverse,
+            source_port: local_port,
+            bind_port: None,
+            enabled: false,
+            error: None,
+        }
+    }
+}
+
+pub fn available_local_port(preferred: u16) -> Result<(u16, TcpListener)> {
+    if let Ok(listener) = TcpListener::bind(("127.0.0.1", preferred)) {
+        return Ok((preferred, listener));
+    }
+    let listener =
+        TcpListener::bind(("127.0.0.1", 0)).context("cannot allocate a local TCP port")?;
+    let port = listener.local_addr()?.port();
+    Ok((port, listener))
+}
+
+pub fn parse_ss_ports(output: &str, include_loopback: bool) -> Vec<u16> {
+    let mut ports = output
+        .lines()
+        .filter_map(|line| {
+            let addr = line.split_whitespace().last()?;
+            if !include_loopback && (addr.starts_with("127.") || addr.starts_with("[::1]")) {
+                return None;
+            }
+            addr.rsplit(':').next()?.parse().ok()
+        })
+        .collect::<Vec<_>>();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_and_deduplicates_ss() {
+        let input = "LISTEN 0 128 127.0.0.1:3000\nLISTEN 0 128 0.0.0.0:22\nLISTEN 0 128 [::]:22\n";
+        assert_eq!(parse_ss_ports(input, true), vec![22, 3000]);
+        assert_eq!(parse_ss_ports(input, false), vec![22]);
+    }
+
+    #[test]
+    fn changes_port_when_preferred_is_busy() {
+        let busy = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let preferred = busy.local_addr().unwrap().port();
+        let (actual, _reservation) = available_local_port(preferred).unwrap();
+        assert_ne!(actual, preferred);
+    }
+}
