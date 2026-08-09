@@ -12,6 +12,7 @@ use std::{
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crossterm::{
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -31,6 +32,29 @@ use crate::{
 };
 
 const MISSING_THRESHOLD: u8 = 2;
+
+enum ScanEvent {
+    Ports(Vec<u16>),
+    Reconnected(Vec<u16>),
+    Error(String),
+}
+
+struct ScanGuard(Arc<AtomicBool>);
+
+impl Drop for ScanGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+    }
+}
 
 pub fn run(
     session: &mut SshSession,
@@ -66,20 +90,34 @@ pub fn run(
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    let _terminal_guard = TerminalGuard;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
-    let (scan_tx, scan_rx) = mpsc::channel::<Result<Vec<u16>, String>>();
+    let (scan_tx, scan_rx) = mpsc::channel::<ScanEvent>();
     let scanning = Arc::new(AtomicBool::new(true));
     let scanner_flag = Arc::clone(&scanning);
     let interval = Duration::from_secs(interval_seconds);
-    let scanner = thread::scope(|scope| -> Result<()> {
+    thread::scope(|scope| -> Result<()> {
+        let _scan_guard = ScanGuard(Arc::clone(&scanning));
         let scanner = scope.spawn(|| {
             let mut next_scan = Instant::now() + interval;
             while scanner_flag.load(Ordering::Relaxed) {
                 if Instant::now() >= next_scan {
-                    let result = session
-                        .discover_ports(include_loopback)
-                        .map_err(|error| format!("{error:#}"));
-                    if scan_tx.send(result).is_err() {
+                    let event = match session.discover_ports(include_loopback) {
+                        Ok(ports) => ScanEvent::Ports(ports),
+                        Err(scan_error) => match session.reconnect_if_needed() {
+                            Ok(true) => match session.discover_ports(include_loopback) {
+                                Ok(ports) => ScanEvent::Reconnected(ports),
+                                Err(error) => ScanEvent::Error(format!(
+                                    "reconnected but scan failed: {error:#}"
+                                )),
+                            },
+                            Ok(false) => ScanEvent::Error(format!("{scan_error:#}")),
+                            Err(error) => ScanEvent::Error(format!(
+                                "disconnected; reconnect failed: {error:#}"
+                            )),
+                        },
+                    };
+                    if scan_tx.send(event).is_err() {
                         break;
                     }
                     next_scan = Instant::now() + interval;
@@ -229,21 +267,26 @@ pub fn run(
             }
             while let Ok(scan) = scan_rx.try_recv() {
                 match scan {
-                    Ok(found) => {
+                    ScanEvent::Ports(found) => {
                         reconcile_scan(session, &mut tunnels, found, auto_forward, &mut message)
                     }
-                    Err(error) => message = format!("scan error; tunnels kept: {error}"),
+                    ScanEvent::Reconnected(found) => restore_after_reconnect(
+                        session,
+                        &mut tunnels,
+                        found,
+                        auto_forward,
+                        &mut message,
+                    ),
+                    ScanEvent::Error(error) => {
+                        message = format!("scan error; tunnels kept: {error}")
+                    }
                 }
             }
         };
         scanning.store(false, Ordering::Relaxed);
         scanner.join().expect("scanner thread panicked");
         result
-    });
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-    scanner
+    })
 }
 
 fn move_selection(state: &mut TableState, len: usize, delta: isize) {
@@ -537,4 +580,30 @@ fn reconcile_scan(
         }
         tunnels.push(tunnel);
     }
+}
+
+fn restore_after_reconnect(
+    session: &SshSession,
+    tunnels: &mut Vec<Tunnel>,
+    found: Vec<u16>,
+    auto_forward: bool,
+    message: &mut String,
+) {
+    let wanted = tunnels.iter().map(|t| t.enabled).collect::<Vec<_>>();
+    for tunnel in tunnels.iter_mut() {
+        tunnel.enabled = false;
+        tunnel.bind_port = None;
+        tunnel.error = None;
+    }
+    reconcile_scan(session, tunnels, found, auto_forward, message);
+    for (index, was_enabled) in wanted.into_iter().enumerate() {
+        if was_enabled
+            && let Some(tunnel) = tunnels.get_mut(index)
+            && !tunnel.enabled
+            && (tunnel.direction == Direction::Reverse || tunnel.present)
+        {
+            enable(session, tunnel, message);
+        }
+    }
+    *message = "SSH reconnected; active tunnels restored".into();
 }

@@ -2,6 +2,7 @@ use std::{
     fs,
     path::PathBuf,
     process::{Command, Stdio},
+    sync::Mutex,
 };
 
 use anyhow::{Context, Result, bail};
@@ -12,26 +13,53 @@ pub struct SshSession {
     destination: String,
     socket: PathBuf,
     closed: bool,
+    extra_args: Vec<String>,
+    command_lock: Mutex<()>,
 }
 
 impl SshSession {
     pub fn connect(destination: String, socket: PathBuf, extra_args: Vec<String>) -> Result<Self> {
-        let status = Command::new("ssh")
-            .args(["-M", "-S"])
-            .arg(&socket)
-            .args(["-o", "ControlPersist=yes", "-o", "ExitOnForwardFailure=yes"])
+        Self::start_master(&destination, &socket, &extra_args, false)?;
+        Ok(Self {
+            destination,
+            socket,
+            closed: false,
+            extra_args,
+            command_lock: Mutex::new(()),
+        })
+    }
+
+    fn start_master(
+        destination: &str,
+        socket: &PathBuf,
+        extra_args: &[String],
+        batch_mode: bool,
+    ) -> Result<()> {
+        let mut command = Command::new("ssh");
+        command.args(["-M", "-S"]).arg(socket).args([
+            "-o",
+            "ControlPersist=yes",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=10",
+            "-o",
+            "ServerAliveCountMax=3",
+        ]);
+        if batch_mode {
+            command.args(["-o", "BatchMode=yes"]);
+        }
+        let status = command
             .args(extra_args)
-            .args(["-fnNT", &destination])
+            .args(["-fnNT", destination])
             .status()
             .context("failed to start ssh; is OpenSSH installed?")?;
         if !status.success() {
             bail!("SSH master connection failed ({status})");
         }
-        Ok(Self {
-            destination,
-            socket,
-            closed: false,
-        })
+        Ok(())
     }
 
     fn control(&self) -> Command {
@@ -41,6 +69,11 @@ impl SshSession {
     }
 
     pub fn discover_ports(&self, include_loopback: bool) -> Result<Vec<u16>> {
+        let _guard = self.command_lock.lock().expect("SSH command lock poisoned");
+        self.discover_ports_unlocked(include_loopback)
+    }
+
+    fn discover_ports_unlocked(&self, include_loopback: bool) -> Result<Vec<u16>> {
         let script = "if command -v ss >/dev/null 2>&1; then ss -H -lnt | awk '{print $4}'; elif command -v netstat >/dev/null 2>&1; then netstat -lnt 2>/dev/null | awk 'NR>2 {print $4}'; else exit 127; fi";
         let remote_command = format!("sh -lc {}", shell_words::quote(script));
         let output = self
@@ -59,6 +92,7 @@ impl SshSession {
     }
 
     pub fn forward(&self, direction: Direction, bind_port: u16, source_port: u16) -> Result<()> {
+        let _guard = self.command_lock.lock().expect("SSH command lock poisoned");
         let (flag, spec) = match direction {
             Direction::Local => (
                 "-L",
@@ -82,6 +116,7 @@ impl SshSession {
     }
 
     pub fn cancel(&self, direction: Direction, bind_port: u16, source_port: u16) -> Result<()> {
+        let _guard = self.command_lock.lock().expect("SSH command lock poisoned");
         let (flag, spec) = match direction {
             Direction::Local => (
                 "-L",
@@ -100,6 +135,25 @@ impl SshSession {
             bail!("ssh could not cancel {flag} {spec}");
         }
         Ok(())
+    }
+
+    /// Recreate a dead master connection without prompting in the background.
+    /// Returns true when a new connection was created.
+    pub fn reconnect_if_needed(&self) -> Result<bool> {
+        let _guard = self.command_lock.lock().expect("SSH command lock poisoned");
+        let alive = self
+            .control()
+            .args(["-O", "check", &self.destination])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if alive {
+            return Ok(false);
+        }
+        let _ = fs::remove_file(&self.socket);
+        Self::start_master(&self.destination, &self.socket, &self.extra_args, true)?;
+        Ok(true)
     }
 
     pub fn close(&mut self) {
