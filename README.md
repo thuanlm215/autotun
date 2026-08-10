@@ -158,6 +158,10 @@ discovered when:
 Infrastructure ports such as `22` (ssh) and `53` (DNS) are not auto-discovered.
 You can still forward any port (including those) with `a` / `v` or `-R`.
 
+Remote listeners created by an **enabled reverse** tunnel are not re-discovered
+as forwards. Otherwise reverse-forwarding local Chrome DevTools (`9222`) would
+immediately open a second forward back to your machine.
+
 Loopback-only listeners (`127.0.0.1`, `::1`) are included by default
 (`--include-loopback`).
 

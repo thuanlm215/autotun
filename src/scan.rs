@@ -39,18 +39,39 @@ pub enum ScanAction {
 /// - Manual-off tunnels (`manual_off == true`) are never auto-enabled, even
 ///   after the remote service restarts.
 /// - New remote ports become new discovered tunnels (enabled when auto-forward
-///   is on). Reverse tunnels are ignored by discovery.
+///   is on).
+/// - Remote ports created by an **enabled reverse** tunnel (`-R` bind) are not
+///   discovered or auto-forwarded back — otherwise reverse Chrome debug (etc.)
+///   would immediately open a loop Forward → reverse echo → local again.
 pub fn plan_scan(
     tunnels: &mut [Tunnel],
     found: &[RemoteListener],
     auto_forward: bool,
 ) -> Vec<ScanAction> {
+    let reverse_owned = reverse_owned_ports(tunnels);
     let mut actions = Vec::new();
 
     for (index, tunnel) in tunnels.iter_mut().enumerate() {
         if tunnel.direction != Direction::Local {
             continue;
         }
+
+        // Listener is our own reverse (-R) echo on the remote: never auto-forward
+        // it back, and tear down any forward that already did.
+        if reverse_owned.contains(&tunnel.source_port) {
+            tunnel.present = true;
+            tunnel.missing_scans = 0;
+            if tunnel.enabled {
+                let bind = tunnel.bind_port.expect("enabled tunnel has bind port");
+                actions.push(ScanAction::Cancel {
+                    index,
+                    bind,
+                    source: tunnel.source_port,
+                });
+            }
+            continue;
+        }
+
         if let Some(listener) = found.iter().find(|l| l.port == tunnel.source_port) {
             tunnel.present = true;
             tunnel.missing_scans = 0;
@@ -75,6 +96,9 @@ pub fn plan_scan(
     }
 
     for listener in found {
+        if reverse_owned.contains(&listener.port) {
+            continue;
+        }
         if tunnels
             .iter()
             .any(|t| t.direction == Direction::Local && t.source_port == listener.port)
@@ -89,6 +113,16 @@ pub fn plan_scan(
     }
 
     actions
+}
+
+/// Remote bind ports of enabled reverse tunnels — these appear in `ss` on the
+/// remote host but must not be treated as independent services to forward.
+fn reverse_owned_ports(tunnels: &[Tunnel]) -> Vec<u16> {
+    tunnels
+        .iter()
+        .filter(|t| t.direction == Direction::Reverse && t.enabled)
+        .filter_map(|t| t.bind_port)
+        .collect()
 }
 
 pub fn tunnel_from_listener(listener: RemoteListener) -> Tunnel {
@@ -296,18 +330,59 @@ mod tests {
     }
 
     #[test]
-    fn reverse_tunnels_are_not_touched_by_discovery() {
-        let mut reverse = Tunnel::reverse(8080);
+    fn reverse_owned_remote_ports_are_not_discovered_as_forwards() {
+        // Reverse local:9222 → remote:9222 creates a remote listener that ss sees.
+        // Discovery must not open Forward 9222 → local 9223 (echo loop).
+        let mut reverse = Tunnel::reverse(9222);
         reverse.enabled = true;
-        reverse.bind_port = Some(8080);
+        reverse.bind_port = Some(9222);
+        reverse.label = "chrome-debug".into();
         let mut tunnels = vec![reverse];
-        apply_scan_in_memory(&mut tunnels, &[listener(8080)], true);
-        // Reverse row stays; a separate local discover may be added for 8080.
+        apply_scan_in_memory(&mut tunnels, &[listener(9222)], true);
+        assert_eq!(tunnels.len(), 1);
         assert_eq!(tunnels[0].direction, Direction::Reverse);
         assert!(tunnels[0].enabled);
+    }
+
+    #[test]
+    fn reverse_echo_cancels_existing_auto_forward() {
+        let mut reverse = Tunnel::reverse(9222);
+        reverse.enabled = true;
+        reverse.bind_port = Some(9222);
+        let mut forward = Tunnel::local(9222);
+        forward.enabled = true;
+        forward.bind_port = Some(9223);
+        forward.requested_port = 9222;
+        let mut tunnels = vec![reverse, forward];
+        apply_scan_in_memory(&mut tunnels, &[listener(9222)], true);
+        assert!(tunnels[0].enabled);
+        assert_eq!(tunnels[0].direction, Direction::Reverse);
+        assert!(!tunnels[1].enabled);
+        assert_eq!(tunnels[1].direction, Direction::Local);
+    }
+
+    #[test]
+    fn real_remote_service_still_discovered_when_not_reverse_owned() {
+        let mut reverse = Tunnel::reverse(9222);
+        reverse.enabled = true;
+        reverse.bind_port = Some(9222);
+        let mut tunnels = vec![reverse];
+        apply_scan_in_memory(&mut tunnels, &[listener(9222), listener(3000)], true);
+        assert_eq!(tunnels.len(), 2);
+        assert_eq!(tunnels[1].source_port, 3000);
+        assert!(tunnels[1].enabled);
+    }
+
+    #[test]
+    fn disabled_reverse_does_not_block_discovery() {
+        let mut reverse = Tunnel::reverse(9222);
+        reverse.enabled = false;
+        reverse.bind_port = Some(9222);
+        let mut tunnels = vec![reverse];
+        apply_scan_in_memory(&mut tunnels, &[listener(9222)], true);
         assert_eq!(tunnels.len(), 2);
         assert_eq!(tunnels[1].direction, Direction::Local);
-        assert_eq!(tunnels[1].source_port, 8080);
+        assert!(tunnels[1].enabled);
     }
 
     #[test]
