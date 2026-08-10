@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 
-use crate::ports::{Direction, parse_ss_ports};
+use crate::ports::{Direction, RemoteListener, parse_ss_listeners};
 
 pub struct SshSession {
     destination: String,
@@ -68,13 +68,15 @@ impl SshSession {
         command
     }
 
-    pub fn discover_ports(&self, include_loopback: bool) -> Result<Vec<u16>> {
+    pub fn discover_ports(&self, include_loopback: bool) -> Result<Vec<RemoteListener>> {
         let _guard = self.command_lock.lock().expect("SSH command lock poisoned");
         self.discover_ports_unlocked(include_loopback)
     }
 
-    fn discover_ports_unlocked(&self, include_loopback: bool) -> Result<Vec<u16>> {
-        let script = "if command -v ss >/dev/null 2>&1; then ss -H -lnt | awk '{print $4}'; elif command -v netstat >/dev/null 2>&1; then netstat -lnt 2>/dev/null | awk 'NR>2 {print $4}'; else exit 127; fi";
+    fn discover_ports_unlocked(&self, include_loopback: bool) -> Result<Vec<RemoteListener>> {
+        // Prefer ss -p so process names can label tunnels. Fall back without -p
+        // when the option is unavailable; process names are best-effort.
+        let script = "if command -v ss >/dev/null 2>&1; then ss -H -lntp 2>/dev/null || ss -H -lnt; elif command -v netstat >/dev/null 2>&1; then netstat -lntp 2>/dev/null || netstat -lnt 2>/dev/null; else exit 127; fi";
         let remote_command = format!("sh -lc {}", shell_words::quote(script));
         let output = self
             .control()
@@ -85,7 +87,7 @@ impl SshSession {
         if !output.status.success() {
             bail!("remote host needs ss (iproute2) or netstat");
         }
-        Ok(parse_ss_ports(
+        Ok(parse_ss_listeners(
             &String::from_utf8_lossy(&output.stdout),
             include_loopback,
         ))

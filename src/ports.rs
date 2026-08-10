@@ -118,21 +118,65 @@ pub fn available_local_port(preferred: u16) -> Result<(u16, TcpListener)> {
     )
 }
 
-pub fn parse_ss_ports(output: &str, include_loopback: bool) -> Vec<u16> {
-    let mut ports = output
-        .lines()
-        .filter_map(|line| {
-            let addr = line.split_whitespace().last()?;
-            if !include_loopback && (addr.starts_with("127.") || addr.starts_with("[::1]")) {
-                return None;
-            }
-            let port = addr.rsplit(':').next()?.parse::<u16>().ok()?;
-            (port > 1024).then_some(port)
-        })
-        .collect::<Vec<_>>();
-    ports.sort_unstable();
-    ports.dedup();
-    ports
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoteListener {
+    pub port: u16,
+    pub process: Option<String>,
+}
+
+pub fn parse_ss_listeners(output: &str, include_loopback: bool) -> Vec<RemoteListener> {
+    use std::collections::BTreeMap;
+
+    let mut by_port = BTreeMap::<u16, Option<String>>::new();
+    for line in output.lines() {
+        let Some((port, process)) = parse_ss_line(line, include_loopback) else {
+            continue;
+        };
+        by_port
+            .entry(port)
+            .and_modify(|existing| {
+                if existing.is_none() {
+                    *existing = process.clone();
+                }
+            })
+            .or_insert(process);
+    }
+    by_port
+        .into_iter()
+        .map(|(port, process)| RemoteListener { port, process })
+        .collect()
+}
+
+fn parse_ss_line(line: &str, include_loopback: bool) -> Option<(u16, Option<String>)> {
+    let mut local_port = None;
+    let mut process = None;
+    for token in line.split_whitespace() {
+        if let Some(name) = parse_ss_process(token) {
+            process = Some(name);
+            continue;
+        }
+        if local_port.is_none()
+            && let Some(port) = parse_ss_local_port(token, include_loopback)
+        {
+            local_port = Some(port);
+        }
+    }
+    Some((local_port?, process))
+}
+
+fn parse_ss_local_port(token: &str, include_loopback: bool) -> Option<u16> {
+    if !include_loopback && (token.starts_with("127.") || token.starts_with("[::1]")) {
+        return None;
+    }
+    let port = token.rsplit(':').next()?.parse::<u16>().ok()?;
+    (port > 1024).then_some(port)
+}
+
+fn parse_ss_process(token: &str) -> Option<String> {
+    // ss -p appends: users:(("name",pid=123,fd=4))
+    let rest = token.strip_prefix("users:((")?;
+    let name = rest.strip_prefix('"')?.split('"').next()?;
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 #[cfg(test)]
@@ -142,8 +186,37 @@ mod tests {
     #[test]
     fn parses_and_deduplicates_ss() {
         let input = "LISTEN 0 128 127.0.0.1:3000\nLISTEN 0 128 0.0.0.0:22\nLISTEN 0 128 [::]:22\n";
-        assert_eq!(parse_ss_ports(input, true), vec![3000]);
-        assert!(parse_ss_ports(input, false).is_empty());
+        assert_eq!(
+            parse_ss_listeners(input, true),
+            vec![RemoteListener {
+                port: 3000,
+                process: None
+            }]
+        );
+        assert!(parse_ss_listeners(input, false).is_empty());
+    }
+
+    #[test]
+    fn parses_process_names_from_ss_p() {
+        let input = concat!(
+            "LISTEN 0 128 127.0.0.1:35633 0.0.0.0:* users:((\"agy\",pid=4102,fd=13))\n",
+            "LISTEN 0 128 127.0.0.1:35633 0.0.0.0:* users:((\"agy\",pid=4102,fd=11))\n",
+            "LISTEN 0 128 0.0.0.0:3000 0.0.0.0:* users:((\"node\",pid=9,fd=23))\n",
+        );
+        let listeners = parse_ss_listeners(input, true);
+        assert_eq!(
+            listeners,
+            vec![
+                RemoteListener {
+                    port: 3000,
+                    process: Some("node".into()),
+                },
+                RemoteListener {
+                    port: 35633,
+                    process: Some("agy".into()),
+                },
+            ]
+        );
     }
 
     #[test]
