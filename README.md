@@ -112,16 +112,19 @@ Run `autotun --help` for the complete command-line reference.
 | --- | --- |
 | `↑` / `↓`, `j` / `k` | Select a tunnel |
 | `Space`, `Enter` | Enable or disable the selected tunnel |
-| `a` | Open the inline form for a local forward (`-L`) |
-| `v` | Open the inline form for a reverse forward (`-R`) |
+| `a` | Add a remote service to local loopback (`-L`) |
+| `v` | Expose a local service on remote loopback (`-R`) |
 | `e` | Edit the selected tunnel's ports or label |
 | `d` | Delete a manual tunnel or ignore a discovered tunnel |
-| `c` | Copy the active bind address using OSC 52 |
 | `r` | Scan remote listeners immediately |
 | `q`, `Esc` | Close all tunnels and exit |
 
 The add form appears directly below the tunnel table. Use `Tab` or
 `Shift+Tab` to change fields, `Enter` to advance or save, and `Esc` to cancel.
+
+The `URL` column is populated only for services that respond as HTTP or TLS.
+It is plain `http://` or `https://` text so terminals with URL detection can
+open it with their usual Ctrl/Cmd-click gesture.
 
 ## Forwarding behavior
 

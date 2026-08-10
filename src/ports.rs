@@ -10,6 +10,23 @@ pub enum Direction {
     Reverse,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UrlScheme {
+    Unknown,
+    Http,
+    Https,
+}
+
+impl UrlScheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "",
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Tunnel {
     pub direction: Direction,
@@ -23,6 +40,7 @@ pub struct Tunnel {
     pub requested_port: u16,
     pub label: String,
     pub discovered: bool,
+    pub scheme: UrlScheme,
 }
 
 impl Tunnel {
@@ -39,6 +57,7 @@ impl Tunnel {
             requested_port: remote_port,
             label: String::new(),
             discovered: true,
+            scheme: UrlScheme::Unknown,
         }
     }
 
@@ -55,6 +74,7 @@ impl Tunnel {
             requested_port: local_port,
             label: String::new(),
             discovered: false,
+            scheme: UrlScheme::Unknown,
         }
     }
 
@@ -71,6 +91,7 @@ impl Tunnel {
             requested_port: local_port,
             label,
             discovered: false,
+            scheme: UrlScheme::Unknown,
         }
     }
 

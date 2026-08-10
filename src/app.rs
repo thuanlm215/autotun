@@ -1,5 +1,6 @@
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
+    net::{SocketAddr, TcpStream},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -10,7 +11,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crossterm::{
     cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind},
@@ -27,7 +27,7 @@ use ratatui::{
 };
 
 use crate::{
-    ports::{Direction, MAX_PORT_FALLBACKS, Tunnel, available_local_port},
+    ports::{Direction, MAX_PORT_FALLBACKS, Tunnel, UrlScheme, available_local_port},
     ssh::SshSession,
 };
 
@@ -205,11 +205,20 @@ pub fn run(
                 } else {
                     "off"
                 });
+                let url = if t.direction == Direction::Local
+                    && t.enabled
+                    && t.scheme != UrlScheme::Unknown
+                {
+                    format!("{}://127.0.0.1:{}", t.scheme.as_str(), t.bind_port.unwrap())
+                } else {
+                    "—".into()
+                };
                 Row::new(vec![
                     Cell::from(direction),
                     Cell::from(if t.label.is_empty() { "—" } else { &t.label }),
                     Cell::from(t.source_port.to_string()),
                     Cell::from(bind),
+                    Cell::from(url),
                     Cell::from(status),
                 ])
                 .style(if t.enabled {
@@ -225,11 +234,19 @@ pub fn run(
                     Constraint::Length(24),
                     Constraint::Length(16),
                     Constraint::Length(16),
-                    Constraint::Min(16),
+                    Constraint::Length(30),
+                    Constraint::Min(14),
                 ],
             )
             .header(
-                Row::new(["Direction", "Label", "Service port", "Bind port", "Status"])
+                Row::new([
+                    "Direction",
+                    "Label",
+                    "Service port",
+                    "Bind port",
+                    "URL",
+                    "Status",
+                ])
                     .style(Style::default().add_modifier(Modifier::BOLD)),
             )
             .block(
@@ -274,7 +291,7 @@ pub fn run(
             }
             frame.render_widget(
                 Paragraph::new(Line::from(format!(
-                    "↑/↓ Space toggle  a add -L  v add -R  e edit  d delete  c copy  r scan  q quit │ {message}"
+                    "↑↓ Select  Space Toggle  a Add remote  v Expose local  e Edit  d Remove  r Rescan  q Quit  │  {message}"
                 )))
                 .block(Block::default().borders(Borders::ALL)),
                 areas[3],
@@ -330,11 +347,6 @@ pub fn run(
                                 state.select(
                                     (!tunnels.is_empty()).then_some(i.min(tunnels.len() - 1)),
                                 );
-                            }
-                        }
-                        KeyCode::Char('c') => {
-                            if let Some(tunnel) = state.selected().and_then(|i| tunnels.get(i)) {
-                                copy_address(tunnel, &mut message);
                             }
                         }
                         KeyCode::Char('r') => match session.discover_ports(include_loopback) {
@@ -467,6 +479,7 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
                 Ok(()) => {
                     tunnel.bind_port = Some(port);
                     tunnel.enabled = true;
+                    tunnel.scheme = detect_web_scheme(port);
                     *message = if port == preferred {
                         format!("port {port} enabled")
                     } else {
@@ -478,6 +491,58 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
         }
         Err(e) => tunnel.error = Some(format!("allocation failed: {e:#}")),
     }
+}
+
+fn detect_web_scheme(port: u16) -> UrlScheme {
+    if probe_tls(port) {
+        UrlScheme::Https
+    } else if probe_http(port) {
+        UrlScheme::Http
+    } else {
+        UrlScheme::Unknown
+    }
+}
+
+fn open_probe_stream(port: u16) -> Option<TcpStream> {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let timeout = Duration::from_millis(250);
+    let stream = TcpStream::connect_timeout(&address, timeout).ok()?;
+    stream.set_read_timeout(Some(timeout)).ok()?;
+    stream.set_write_timeout(Some(timeout)).ok()?;
+    Some(stream)
+}
+
+fn probe_tls(port: u16) -> bool {
+    // A minimal TLS 1.2 ClientHello. A TLS ServerHello or TLS alert is enough
+    // to classify the endpoint; no certificate is trusted or retained.
+    let client_hello = [
+        0x16, 0x03, 0x01, 0x00, 0x2f, 0x01, 0x00, 0x00, 0x2b, 0x03, 0x03, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x04, 0x00, 0x2f, 0x00, 0x35, 0x01, 0x00,
+    ];
+    let Some(mut stream) = open_probe_stream(port) else {
+        return false;
+    };
+    if stream.write_all(&client_hello).is_err() {
+        return false;
+    }
+    let mut record = [0_u8; 5];
+    stream.read_exact(&mut record).is_ok() && matches!(record[0], 0x15 | 0x16) && record[1] == 0x03
+}
+
+fn probe_http(port: u16) -> bool {
+    let Some(mut stream) = open_probe_stream(port) else {
+        return false;
+    };
+    if stream
+        .write_all(b"HEAD / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut prefix = [0_u8; 5];
+    stream.read_exact(&mut prefix).is_ok() && prefix == *b"HTTP/"
 }
 
 type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
@@ -633,18 +698,6 @@ fn delete_tunnel(
     }
 }
 
-fn copy_address(tunnel: &Tunnel, message: &mut String) {
-    let Some(port) = tunnel.bind_port else {
-        *message = "tunnel has no active bind address".into();
-        return;
-    };
-    let address = format!("127.0.0.1:{port}");
-    let encoded = STANDARD.encode(&address);
-    print!("\x1b]52;c;{encoded}\x07");
-    let _ = io::stdout().flush();
-    *message = format!("copied {address}");
-}
-
 fn reconcile_scan(
     session: &SshSession,
     tunnels: &mut Vec<Tunnel>,
@@ -724,6 +777,7 @@ fn restore_after_reconnect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{net::TcpListener, thread};
 
     #[test]
     fn inline_local_form_uses_service_port_as_default_bind_port() {
@@ -741,5 +795,32 @@ mod tests {
         let mut form = InlineForm::new(Direction::Reverse);
         form.fields[0] = "0".into();
         assert!(form.tunnel().is_err());
+    }
+
+    #[test]
+    fn detects_http_and_tls_responses() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 128];
+                let _ = stream.read(&mut request);
+                stream.write_all(b"HTTP/1.0 200 OK\r\n\r\n").unwrap();
+            }
+        });
+        assert_eq!(detect_web_scheme(port), UrlScheme::Http);
+        server.join().unwrap();
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 128];
+            let _ = stream.read(&mut request);
+            stream.write_all(&[0x16, 0x03, 0x03, 0x00, 0x00]).unwrap();
+        });
+        assert_eq!(detect_web_scheme(port), UrlScheme::Https);
+        server.join().unwrap();
     }
 }
