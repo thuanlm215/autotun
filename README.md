@@ -45,7 +45,7 @@ Install a specific version or select another destination:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh \
-  | AUTOTUN_VERSION=1.0.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
+  | AUTOTUN_VERSION=1.1.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
 ```
 
 For environments where piping a remote script is undesirable, download and
