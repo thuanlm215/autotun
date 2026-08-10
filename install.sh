@@ -10,7 +10,7 @@ die() {
     exit 1
 }
 
-for command in curl tar sha256sum mktemp; do
+for command in curl tar sha256sum mktemp install; do
     command -v "$command" >/dev/null 2>&1 || die "required command not found: $command"
 done
 
