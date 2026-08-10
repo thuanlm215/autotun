@@ -350,9 +350,7 @@ pub fn run(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                if key.code == KeyCode::Char('c')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     break Ok(());
                 }
                 if let Some(active_form) = form.as_mut() {
@@ -442,9 +440,7 @@ pub fn run(
 fn handle_inline_form(key: KeyCode, form: &mut InlineForm) -> Result<Option<Tunnel>> {
     match key {
         KeyCode::Down => form.selected = (form.selected + 1) % form.fields.len(),
-        KeyCode::Up => {
-            form.selected = (form.selected + form.fields.len() - 1) % form.fields.len()
-        }
+        KeyCode::Up => form.selected = (form.selected + form.fields.len() - 1) % form.fields.len(),
         KeyCode::Backspace => {
             form.fields[form.selected].pop();
         }

@@ -45,10 +45,7 @@ fn unique_socket() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "autotun-itest-{}-{nonce}.sock",
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("autotun-itest-{}-{nonce}.sock", std::process::id()))
 }
 
 /// Pick a free high port on the remote and start a short-lived TCP listener.
@@ -95,7 +92,12 @@ s.close()
     use std::io::BufRead;
     while start.elapsed() < Duration::from_secs(10) {
         let mut line = String::new();
-        if reader.read_line(&mut line).ok().filter(|n| *n > 0).is_none() {
+        if reader
+            .read_line(&mut line)
+            .ok()
+            .filter(|n| *n > 0)
+            .is_none()
+        {
             if child.try_wait().ok().flatten().is_some() {
                 break;
             }
@@ -192,7 +194,9 @@ fn live_discover_and_forward_roundtrip() {
         .position(|t| t.source_port == port)
         .expect("tunnel row for test port");
     assert!(
-        actions.iter().any(|a| matches!(a, ScanAction::Enable(i) if *i == enable_idx)),
+        actions
+            .iter()
+            .any(|a| matches!(a, ScanAction::Enable(i) if *i == enable_idx)),
         "expected Enable({enable_idx}) for port {port}, got {actions:?}"
     );
 
@@ -219,7 +223,9 @@ fn live_discover_and_forward_roundtrip() {
         "unexpected response through tunnel: {body:?}"
     );
 
-    session.cancel(Direction::Local, port, port).expect("cancel");
+    session
+        .cancel(Direction::Local, port, port)
+        .expect("cancel");
     stop_remote_listener(&dest, &marker);
     session.close();
 }
@@ -288,7 +294,9 @@ fn live_manual_off_plan_matches_restart_semantics() {
     // If the OS reused a different free port, re-bind the scenario to the same
     // logical test by checking manual_off still blocks auto enable for `port`
     // and that a *new* port would be discovered separately.
-    let found2 = session.discover_ports(true).expect("discover after restart");
+    let found2 = session
+        .discover_ports(true)
+        .expect("discover after restart");
     apply_scan_in_memory(&mut tunnels, &found2, true);
 
     if port2 == port {
@@ -344,5 +352,8 @@ fn live_parse_remote_ss_matches_discover() {
     let mut b: Vec<u16> = found.iter().map(|l| l.port).collect();
     a.sort_unstable();
     b.sort_unstable();
-    assert_eq!(a, b, "discover_ports must match local parse of remote ss\nraw:\n{text}");
+    assert_eq!(
+        a, b,
+        "discover_ports must match local parse of remote ss\nraw:\n{text}"
+    );
 }

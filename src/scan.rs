@@ -166,7 +166,11 @@ mod tests {
         let mut tunnels = Vec::new();
         apply_scan_in_memory(&mut tunnels, &[listener(3000), listener(3001)], true);
         assert_eq!(tunnels.len(), 2);
-        assert!(tunnels.iter().all(|t| t.enabled && t.discovered && t.present));
+        assert!(
+            tunnels
+                .iter()
+                .all(|t| t.enabled && t.discovered && t.present)
+        );
         assert_eq!(tunnels[0].source_port, 3000);
         assert_eq!(tunnels[1].source_port, 3001);
     }
