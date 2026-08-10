@@ -4,26 +4,30 @@
 [![Release](https://img.shields.io/github/v/release/thuanlm215/autotun)](https://github.com/thuanlm215/autotun/releases/latest)
 [![License](https://img.shields.io/github/license/thuanlm215/autotun)](LICENSE)
 
-`autotun` is a terminal interface for discovering and managing SSH port
-forwarding. It watches TCP services on a remote host, forwards them to your
-machine automatically, and lets you manage local and reverse tunnels without
-reconnecting.
+`autotun` is a terminal UI for discovering and managing SSH port forwards over
+a single OpenSSH connection. It watches TCP listeners on a remote host,
+forwards them to local loopback by default, and lets you add, edit, toggle, or
+reverse tunnels without reconnecting.
 
-All operations share one OpenSSH ControlMaster connection. Existing SSH
-configuration—including aliases, keys, agents, `ProxyJump`, and custom
-options—continues to work.
+Existing SSH configuration works as usual: aliases, keys, agents, `ProxyJump`,
+and custom options.
 
 ## Features
 
-- Automatically discovers remote TCP listeners above port 1024.
-- Forwards discovered services to local loopback by default.
-- Supports local (`-L`) and explicitly configured reverse (`-R`) tunnels.
-- Adds and removes forwards without opening another SSH transport.
+- Discovers remote TCP listeners and auto-forwards them (see
+  [Discovery](#discovery)).
+- Labels tunnels from remote process names when `ss -p` can see them.
+- Detects application protocols (`tcp`, `http`, `https`, `ws`) and shows
+  scheme-prefixed local URLs for open forwards.
+- Supports **forward** (`-L`, remote → local) and **reverse** (`-R`, local →
+  remote) tunnels.
+- Adds and cancels forwards on one ControlMaster session (no extra SSH
+  transports).
 - Rescans remote listeners in the background and tracks service lifecycle.
-- Restores active tunnels after an SSH reconnect.
-- Resolves port conflicts predictably by trying the next five ports.
-- Provides labels, manual port editing, per-tunnel controls, and address copy.
-- Ships as static Linux binaries for x86-64 and ARM64.
+- Restores previously enabled tunnels after an SSH reconnect.
+- Resolves local bind conflicts by trying the next five ports.
+- Inline multi-line add/edit forms; help bar toggle with `?`.
+- Static Linux binaries for x86-64 and ARM64.
 
 ## Installation
 
@@ -37,19 +41,17 @@ verifies its SHA-256 checksum, and installs `autotun` to
 curl -fsSL https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh | sh
 ```
 
-Many Linux environments include `$HOME/.local/bin` in `PATH`. If yours does
-not, add that directory using your shell's normal `PATH` configuration or run
-the binary as `$HOME/.local/bin/autotun`.
+If `$HOME/.local/bin` is not on your `PATH`, add it in your shell config or run
+`$HOME/.local/bin/autotun` directly.
 
-Install a specific version or select another destination:
+Install a specific version or choose another destination:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh \
-  | AUTOTUN_VERSION=1.1.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
+  | AUTOTUN_VERSION=1.2.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
 ```
 
-For environments where piping a remote script is undesirable, download and
-inspect it first:
+Download and inspect the script first if you prefer not to pipe to `sh`:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh
@@ -57,18 +59,18 @@ less install.sh
 sh install.sh
 ```
 
-Release archives and checksums are also available from the
+Archives and checksums are on the
 [GitHub Releases page](https://github.com/thuanlm215/autotun/releases/latest).
 
 ### Build from source
 
-Rust and OpenSSH are required:
+Requires Rust and OpenSSH:
 
 ```sh
 cargo install --git https://github.com/thuanlm215/autotun --locked
 ```
 
-Or build a checkout directly:
+Or from a checkout:
 
 ```sh
 cargo build --release --locked
@@ -77,130 +79,180 @@ install -Dm755 target/release/autotun "$HOME/.local/bin/autotun"
 
 ## Usage
 
-Connect using an SSH destination or an alias from `~/.ssh/config`:
-
 ```sh
 autotun user@example.com
 autotun development-server
 ```
 
-Remote services are discovered and forwarded automatically. To start in
-manual mode instead:
+Discover without auto-forwarding:
 
 ```sh
 autotun development-server --no-auto-forward
 ```
 
-Change the default three-second scan interval:
+Scan interval (default 3 seconds):
 
 ```sh
 autotun development-server --interval 5
 ```
 
-Add reverse forwards at startup or pass additional OpenSSH options:
+Reverse forwards at startup, or extra OpenSSH options:
 
 ```sh
 autotun development-server -R 3000 -R 8080
 autotun development-server --ssh-arg=-J --ssh-arg=bastion.example.com
 ```
 
-Run `autotun --help` for the complete command-line reference.
+Run `autotun --help` for the full CLI reference.
 
 ## Controls
 
+Help is shown by default. Press `?` to hide or show it.
+
 | Key | Action |
 | --- | --- |
-| `↑` / `↓`, `j` / `k` | Select a tunnel |
-| `Space`, `Enter` | Enable or disable the selected tunnel |
-| `a` | Add a remote service to local loopback (`-L`) |
-| `v` | Expose a local service on remote loopback (`-R`) |
-| `e` | Edit the selected tunnel's ports or label |
-| `d` | Delete a manual tunnel or ignore a discovered tunnel |
-| `r` | Scan remote listeners immediately |
-| `q`, `Esc` | Close all tunnels and exit |
+| `↑` / `↓`, `j` / `k` | Move selection |
+| `Space` | Toggle the selected tunnel on or off |
+| `Enter`, `e` | Edit the selected tunnel (inline form) |
+| `a` | Add a **forward** (remote → local, `-L`) |
+| `v` | Add a **reverse** (local → remote, `-R`) |
+| `d` | Remove a manual tunnel, or ignore a discovered one for this session |
+| `r` | Rescan remote listeners now |
+| `?` | Toggle the help bar |
+| `q`, `Ctrl+C` | Close tunnels and exit |
 
-The add form appears directly below the tunnel table. Use `Tab` or
-`Shift+Tab` to change fields, `Enter` to advance or save, and `Esc` to cancel.
+`Esc` cancels an open form. It does **not** quit the app.
 
-The `URL` column is populated only for services that respond as HTTP or TLS.
-It is plain `http://` or `https://` text so terminals with URL detection can
-open it with their usual Ctrl/Cmd-click gesture.
+### Add / edit form
+
+The form opens under the table (one field per line). Field focus is highlighted.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Move between fields |
+| `Enter` | Next field, or save on the last field |
+| `Esc` | Cancel |
+
+While the form is open, the footer shows form help instead of the main shortcut
+list.
+
+### Table columns
+
+| Column | Meaning |
+| --- | --- |
+| Direction | `Forward` (remote → local) or `Reverse` (local → remote) |
+| Label | Process name from remote `ss -p`, or a label you set |
+| Remote port | Port on the remote side of the mapping |
+| Local port | Port on the local side of the mapping |
+| URL | Local URL when a forward is on, with detected scheme |
+| Status | `ON`, `off`, `MANUAL OFF`, `TARGET DOWN`, or an error |
+
+## Discovery
+
+Autotun runs remote `ss -lntp` (falls back to `ss -lnt` / `netstat`). A port is
+discovered when:
+
+- the port is **greater than 1024**, or
+- the port is a well-known application listener: **80** or **443**
+
+Infrastructure ports such as `22` (ssh) and `53` (DNS) are not auto-discovered.
+You can still forward any port (including those) with `a` / `v` or `-R`.
+
+Loopback-only listeners (`127.0.0.1`, `::1`) are included by default
+(`--include-loopback`).
 
 ## Forwarding behavior
 
-For a remote service listening on port `3000`, autotun first requests this
-mapping:
+### Forward (remote → local)
+
+For a remote service on port `3000`, autotun prefers:
 
 ```text
 local 127.0.0.1:3000  →  remote 127.0.0.1:3000
 ```
 
-If local port `3000` is unavailable, it tries `3001` through `3005` in order.
-If none can be bound, the tunnel remains visible with a conflict status.
+If local `3000` cannot be bound, it tries `3001` … `3005`. If none work, the
+row stays visible with an error in Status.
 
-Reverse tunnels are never discovered or created implicitly. They must be added
-with `v` in the TUI or explicitly with `--reverse` / `-R`. A reverse tunnel is
-bound to remote loopback and targets the requested local service:
+### Reverse (local → remote)
+
+Reverse tunnels are never discovered. Add them with `v` or `--reverse` / `-R`:
 
 ```text
 remote 127.0.0.1:8080  →  local 127.0.0.1:8080
 ```
 
-Autotun scans every three seconds by default. A remote service must be absent
-from two consecutive successful scans before its local tunnel is removed.
-Failed scans do not remove tunnels. If the service returns, its tunnel is
-restored unless it was disabled manually.
+### Lifecycle
 
-Configuration and manual overrides are intentionally scoped to the current
-session; autotun does not persist settings per host.
+- Scans run every three seconds by default.
+- A remote service must be missing for **two consecutive successful** scans
+  before the tunnel is marked `TARGET DOWN` and an active forward is cancelled.
+- Failed scans do not remove tunnels.
+- If a service returns and auto-forward is on, the tunnel is re-enabled **unless**
+  you turned it off with `Space` (`MANUAL OFF`). Manual-off survives service
+  restart until you enable the tunnel again or remove it with `d`.
+- Ignoring a discovered tunnel with `d` also sets manual-off for the session.
+- Settings are session-only; nothing is persisted per host.
+
+### Protocol and URL
+
+After a forward is enabled, autotun probes the local bind and classifies:
+
+| Protocol | How it is detected |
+| --- | --- |
+| `https` | TLS ServerHello / alert |
+| `ws` | HTTP `101 Switching Protocols` |
+| `http` | HTTP response |
+| `tcp` | Default (no higher-level match) |
+
+The URL column shows values such as `https://127.0.0.1:443` or
+`tcp://127.0.0.1:5432` so terminals can Ctrl/Cmd-click them. Reverse tunnels do
+not show a local URL.
+
+Binding local privileged ports (`80`, `443`, …) may require elevated rights on
+your machine; if the preferred port fails, the usual port fallback applies.
 
 ## How it works
 
-Autotun starts one background OpenSSH ControlMaster connection. Listener
-discovery and tunnel changes run as multiplexed channels through its control
-socket:
-
 ```text
 autotun
-   └── one SSH transport
-       ├── remote listener scans
+   └── one SSH ControlMaster transport
+       ├── remote listener scans (ss / netstat)
        ├── local forwards (-L)
        └── reverse forwards (-R)
 ```
 
-The remote scan uses `ss`, with `netstat` as a fallback. No remote agent,
-daemon, elevated privileges, or configuration file is installed.
+No remote agent, daemon, elevated install, or config file is required on the
+server.
 
 ## Requirements and compatibility
 
-- Linux on x86-64 or ARM64 for the prebuilt binaries.
-- OpenSSH client available as `ssh` on the local machine.
-- `ss` or `netstat` available on the remote host.
-- TCP forwarding permitted by the remote SSH server.
-- A terminal with OSC 52 support is recommended for clipboard integration.
-
-Other architectures can build autotun from source when supported by Rust.
+- Linux x86-64 or ARM64 for prebuilt binaries (other targets: build from source).
+- Local OpenSSH client (`ssh`).
+- Remote `ss` (iproute2) or `netstat`.
+- Remote SSH server allows TCP forwarding.
 
 ## Security
 
-- Generated forwards bind to `127.0.0.1`; services are not exposed publicly by
-  default.
-- Reverse forwarding is always an explicit user action.
-- Release installers verify published SHA-256 checksums before installation.
-- SSH authentication and host verification are delegated to OpenSSH.
+- Forwards bind to `127.0.0.1` only; they are not published on the LAN or WAN.
+- Reverse forwards are always explicit (`v` or `-R`).
+- The install script verifies published SHA-256 checksums.
+- Authentication and host keys are handled by OpenSSH.
 
-Review the installer and release checksums before use if required by your
-environment's security policy.
-
-## Contributing
-
-Issues and pull requests are welcome. Before submitting a change, run:
+## Development
 
 ```sh
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 tests/install.sh
+```
+
+Optional live SSH tests (need network and credentials):
+
+```sh
+AUTOTUN_SSH_TEST=1 AUTOTUN_SSH_DEST=user@host \
+  cargo test --locked --test ssh_lifecycle -- --nocapture
 ```
 
 ## License
