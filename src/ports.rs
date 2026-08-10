@@ -175,6 +175,11 @@ fn parse_ss_line(line: &str, include_loopback: bool) -> Option<(u16, Option<Stri
 }
 
 fn parse_ss_local_port(token: &str, include_loopback: bool) -> Option<u16> {
+    // Require host:port form. Bare numbers are Recv-Q/Send-Q columns from ss
+    // (e.g. "LISTEN 0 4096 127.0.0.53%lo:53") and must not be treated as ports.
+    if !token.contains(':') {
+        return None;
+    }
     if !include_loopback && (token.starts_with("127.") || token.starts_with("[::1]")) {
         return None;
     }
@@ -204,6 +209,24 @@ mod tests {
             }]
         );
         assert!(parse_ss_listeners(input, false).is_empty());
+    }
+
+    #[test]
+    fn ignores_ss_queue_sizes_that_look_like_ports() {
+        // Real ss -lntp line: columns are State Recv-Q Send-Q Local Peer [Process].
+        // Send-Q is often 4096; that must not become a discovered listener.
+        let input = concat!(
+            "LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*\n",
+            "LISTEN 0 4096 127.0.0.1:35633 0.0.0.0:* users:((\"agy\",pid=1,fd=2))\n",
+            "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n",
+        );
+        assert_eq!(
+            parse_ss_listeners(input, true),
+            vec![RemoteListener {
+                port: 35633,
+                process: Some("agy".into()),
+            }]
+        );
     }
 
     #[test]

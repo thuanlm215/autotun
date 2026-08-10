@@ -92,7 +92,7 @@ impl InlineForm {
     }
 
     fn help_line() -> &'static str {
-        "Tab/Shift+Tab: field  Enter: next/save  Esc: cancel"
+        "↑↓ field  Enter: next/save  Esc: cancel"
     }
 
     fn tunnel(&self) -> Result<Tunnel> {
@@ -469,8 +469,8 @@ pub fn run(
 
 fn handle_inline_form(key: KeyCode, form: &mut InlineForm) -> Result<Option<Tunnel>> {
     match key {
-        KeyCode::Tab | KeyCode::Down => form.selected = (form.selected + 1) % form.fields.len(),
-        KeyCode::BackTab | KeyCode::Up => {
+        KeyCode::Down => form.selected = (form.selected + 1) % form.fields.len(),
+        KeyCode::Up => {
             form.selected = (form.selected + form.fields.len() - 1) % form.fields.len()
         }
         KeyCode::Backspace => {
