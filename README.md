@@ -21,11 +21,27 @@ port discovery, `-L` forwards, and `-R` forwards share one SSH transport.
 
 ## Install
 
-Prerequisites: Rust and OpenSSH. On Arch Linux:
+Install the latest static Linux binary (x86-64 or ARM64) into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh | sh
+```
+
+Pin a version or choose another install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh \
+  | AUTOTUN_VERSION=1.0.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
+```
+
+The installer verifies the release SHA-256 checksum before installing. If the
+default directory is not in your fish `PATH`, run `fish_add_path ~/.local/bin`.
+
+To build from source, install Rust and OpenSSH. On Arch Linux:
 
 ```bash
 sudo pacman -S --needed rust openssh
-cargo install --git https://github.com/thuanlm215/autotun
+cargo install --git https://github.com/thuanlm215/autotun --locked
 ```
 
 Or build from a checkout:
