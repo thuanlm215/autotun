@@ -21,7 +21,7 @@ jobs:
             target: aarch64-unknown-linux-musl
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Verify tag matches Cargo version
         shell: bash
@@ -53,7 +53,7 @@ jobs:
           install -m 0644 LICENSE README.md dist/package/
           tar -C dist/package -czf "dist/${archive}" autotun LICENSE README.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: autotun-${{ matrix.target }}
           path: dist/autotun-${{ matrix.target }}.tar.gz
@@ -66,8 +66,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
         with:
           pattern: autotun-*
           path: dist

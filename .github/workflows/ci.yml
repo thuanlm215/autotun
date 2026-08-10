@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Check formatting
         run: cargo fmt --check
       - name: Run tests
@@ -21,4 +21,3 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Test installer
         run: tests/install.sh
-
