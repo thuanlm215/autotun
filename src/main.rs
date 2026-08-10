@@ -1,11 +1,9 @@
-mod app;
-mod ports;
-mod ssh;
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use clap::Parser;
+
+use autotun::{app, ssh};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Discover and toggle SSH tunnels from a TUI")]

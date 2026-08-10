@@ -37,7 +37,7 @@ impl Protocol {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Tunnel {
     pub direction: Direction,
     pub source_port: u16,
@@ -184,7 +184,17 @@ fn parse_ss_local_port(token: &str, include_loopback: bool) -> Option<u16> {
         return None;
     }
     let port = token.rsplit(':').next()?.parse::<u16>().ok()?;
-    (port > 1024).then_some(port)
+    is_discoverable_port(port).then_some(port)
+}
+
+/// Whether a remote TCP port should appear in discovery / auto-forward.
+///
+/// High ports (`> 1024`) are always included. Privileged ports are limited to
+/// well-known **application** listeners (HTTP/HTTPS) so infrastructure noise
+/// like sshd (`22`) or DNS (`53`) stays hidden. Pure low-level services on
+/// other ≤1024 ports are not auto-forwarded; add them manually with `a` if needed.
+pub fn is_discoverable_port(port: u16) -> bool {
+    port > 1024 || matches!(port, 80 | 443)
 }
 
 fn parse_ss_process(token: &str) -> Option<String> {
@@ -274,5 +284,93 @@ mod tests {
         let error = available_local_port(base).unwrap_err();
         assert!(error.to_string().contains("are unavailable"));
         drop(listeners);
+    }
+
+    #[test]
+    fn discovers_http_https_privileged_ports_but_not_infra() {
+        let input = concat!(
+            "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n",
+            "LISTEN 0 128 0.0.0.0:53 0.0.0.0:*\n",
+            "LISTEN 0 128 0.0.0.0:80 0.0.0.0:*\n",
+            "LISTEN 0 128 0.0.0.0:443 0.0.0.0:*\n",
+            "LISTEN 0 128 0.0.0.0:1024 0.0.0.0:*\n",
+            "LISTEN 0 128 0.0.0.0:1025 0.0.0.0:*\n",
+            "LISTEN 0 128 *:8080 *:*\n",
+        );
+        assert_eq!(
+            parse_ss_listeners(input, true)
+                .into_iter()
+                .map(|l| l.port)
+                .collect::<Vec<_>>(),
+            // 80/443 = app (HTTP/S); 22/53/1024 stay filtered; >1024 kept.
+            vec![80, 443, 1025, 8080]
+        );
+        assert!(is_discoverable_port(80));
+        assert!(is_discoverable_port(443));
+        assert!(is_discoverable_port(3000));
+        assert!(!is_discoverable_port(22));
+        assert!(!is_discoverable_port(53));
+        assert!(!is_discoverable_port(1024));
+    }
+
+    #[test]
+    fn parses_ipv6_and_interface_scoped_addresses() {
+        let input = concat!(
+            "LISTEN 0 128 [::1]:3000 [::]:*\n",
+            "LISTEN 0 128 [fe80::1]%eth0:3001 [::]:*\n",
+            "LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*\n",
+        );
+        assert_eq!(
+            parse_ss_listeners(input, true)
+                .into_iter()
+                .map(|l| l.port)
+                .collect::<Vec<_>>(),
+            vec![3000, 3001]
+        );
+        // Loopback-only IPv6 dropped when include_loopback is false.
+        assert_eq!(
+            parse_ss_listeners(input, false)
+                .into_iter()
+                .map(|l| l.port)
+                .collect::<Vec<_>>(),
+            vec![3001]
+        );
+    }
+
+    #[test]
+    fn prefers_first_process_name_when_deduping() {
+        let input = concat!(
+            "LISTEN 0 128 0.0.0.0:9000 0.0.0.0:*\n",
+            "LISTEN 0 128 0.0.0.0:9000 0.0.0.0:* users:((\"later\",pid=2,fd=1))\n",
+            "LISTEN 0 128 127.0.0.1:9001 0.0.0.0:* users:((\"first\",pid=1,fd=1))\n",
+            "LISTEN 0 128 127.0.0.1:9001 0.0.0.0:* users:((\"second\",pid=2,fd=1))\n",
+        );
+        let listeners = parse_ss_listeners(input, true);
+        assert_eq!(
+            listeners,
+            vec![
+                RemoteListener {
+                    port: 9000,
+                    process: Some("later".into()),
+                },
+                RemoteListener {
+                    port: 9001,
+                    process: Some("first".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn netstat_style_lines_without_process_still_parse() {
+        // netstat -lnt style (no users:(...) column).
+        let input = "tcp 0 0 0.0.0.0:7000 0.0.0.0:* LISTEN\n";
+        assert_eq!(
+            parse_ss_listeners(input, true),
+            vec![RemoteListener {
+                port: 7000,
+                process: None
+            }]
+        );
     }
 }

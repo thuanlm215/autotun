@@ -1,10 +1,18 @@
 [package]
 name = "autotun"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 description = "TUI for discovering and toggling SSH port forwards over one connection"
 license = "MIT"
 repository = "https://github.com/thuanlm215/autotun"
+
+[lib]
+name = "autotun"
+path = "src/lib.rs"
+
+[[bin]]
+name = "autotun"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"

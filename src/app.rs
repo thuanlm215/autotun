@@ -30,10 +30,9 @@ use crate::{
     ports::{
         Direction, MAX_PORT_FALLBACKS, Protocol, RemoteListener, Tunnel, available_local_port,
     },
+    scan::{ScanAction, plan_scan, tunnel_from_listener},
     ssh::SshSession,
 };
-
-const MISSING_THRESHOLD: u8 = 2;
 
 enum ScanEvent {
     Ports(Vec<RemoteListener>),
@@ -193,7 +192,7 @@ pub fn run(
         });
 
         let mut form = None::<InlineForm>;
-        let mut show_help = false;
+        let mut show_help = true;
         let result = loop {
             terminal.draw(|frame| {
             let form_height = if form.is_some() { 5 } else { 0 };
@@ -262,8 +261,9 @@ pub fn run(
                 [
                     Constraint::Length(12), // Direction
                     Constraint::Length(15), // Label
-                    Constraint::Length(12), // Remote port
-                    Constraint::Length(12), // Local port
+                    Constraint::Length(15), // Remote port
+                    Constraint::Length(15), // Local port
+                    // Fixed width: min == max == 25 (Length is the ratatui form).
                     Constraint::Length(25), // URL
                     Constraint::Min(12),    // Status
                 ],
@@ -632,23 +632,6 @@ fn probe_websocket(port: u16) -> bool {
     }
 }
 
-fn tunnel_from_listener(listener: RemoteListener) -> Tunnel {
-    let mut tunnel = Tunnel::local(listener.port);
-    if let Some(process) = listener.process {
-        tunnel.label = process;
-    }
-    tunnel
-}
-
-fn apply_auto_label(tunnel: &mut Tunnel, process: Option<&str>) {
-    if tunnel.label.is_empty()
-        && let Some(process) = process
-        && !process.is_empty()
-    {
-        tunnel.label = process.to_owned();
-    }
-}
-
 fn apply_edit(
     session: &SshSession,
     tunnels: &mut [Tunnel],
@@ -702,46 +685,40 @@ fn reconcile_scan(
     found: Vec<RemoteListener>,
     auto_forward: bool,
 ) {
-    for tunnel in tunnels
-        .iter_mut()
-        .filter(|t| t.direction == Direction::Local)
-    {
-        if let Some(listener) = found.iter().find(|l| l.port == tunnel.source_port) {
-            tunnel.present = true;
-            tunnel.missing_scans = 0;
-            apply_auto_label(tunnel, listener.process.as_deref());
-            if auto_forward && !tunnel.enabled && !tunnel.manual_off {
-                enable(session, tunnel);
-            }
-        } else {
-            tunnel.missing_scans = tunnel.missing_scans.saturating_add(1);
-            if tunnel.missing_scans >= MISSING_THRESHOLD {
-                tunnel.present = false;
-                if tunnel.enabled {
-                    let port = tunnel.bind_port.expect("enabled tunnel has bind port");
-                    match session.cancel(Direction::Local, port, tunnel.source_port) {
-                        Ok(()) => {
-                            tunnel.enabled = false;
-                        }
-                        Err(error) => tunnel.error = Some(format!("cancel failed: {error:#}")),
-                    }
+    let actions = plan_scan(tunnels, &found, auto_forward);
+    for action in actions {
+        match action {
+            ScanAction::Enable(index) => {
+                if let Some(tunnel) = tunnels.get_mut(index) {
+                    enable(session, tunnel);
                 }
             }
+            ScanAction::Cancel {
+                index,
+                bind,
+                source,
+            } => match session.cancel(Direction::Local, bind, source) {
+                Ok(()) => {
+                    if let Some(tunnel) = tunnels.get_mut(index) {
+                        tunnel.enabled = false;
+                    }
+                }
+                Err(error) => {
+                    if let Some(tunnel) = tunnels.get_mut(index) {
+                        tunnel.error = Some(format!("cancel failed: {error:#}"));
+                    }
+                }
+            },
+            ScanAction::Discover {
+                mut tunnel,
+                enable: should_enable,
+            } => {
+                if should_enable {
+                    enable(session, &mut tunnel);
+                }
+                tunnels.push(tunnel);
+            }
         }
-    }
-
-    for listener in found {
-        if tunnels
-            .iter()
-            .any(|t| t.direction == Direction::Local && t.source_port == listener.port)
-        {
-            continue;
-        }
-        let mut tunnel = tunnel_from_listener(listener);
-        if auto_forward {
-            enable(session, &mut tunnel);
-        }
-        tunnels.push(tunnel);
     }
 }
 
