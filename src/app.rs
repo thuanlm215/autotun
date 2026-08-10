@@ -38,7 +38,7 @@ const MISSING_THRESHOLD: u8 = 2;
 enum ScanEvent {
     Ports(Vec<RemoteListener>),
     Reconnected(Vec<RemoteListener>),
-    Error(String),
+    Error,
 }
 
 struct InlineForm {
@@ -92,7 +92,7 @@ impl InlineForm {
     }
 
     fn help_line() -> &'static str {
-        "↑↓ field  Enter: next/save  Esc: cancel"
+        "↑↓ Select  Enter Next/Save  Esc Cancel"
     }
 
     fn tunnel(&self) -> Result<Tunnel> {
@@ -141,21 +141,20 @@ pub fn run(
         .collect::<Vec<_>>();
     tunnels.extend(reverse_ports.iter().copied().map(Tunnel::reverse));
     let mut state = TableState::default().with_selected((!tunnels.is_empty()).then_some(0));
-    let mut message = format!("{} listener(s) found", tunnels.len());
 
     if auto_forward {
         for tunnel in tunnels
             .iter_mut()
             .filter(|t| t.direction == Direction::Local)
         {
-            enable(session, tunnel, &mut message);
+            enable(session, tunnel);
         }
     }
     for tunnel in tunnels
         .iter_mut()
         .filter(|t| t.direction == Direction::Reverse)
     {
-        enable(session, tunnel, &mut message);
+        enable(session, tunnel);
     }
 
     enable_raw_mode()?;
@@ -175,17 +174,13 @@ pub fn run(
                 if Instant::now() >= next_scan {
                     let event = match session.discover_ports(include_loopback) {
                         Ok(ports) => ScanEvent::Ports(ports),
-                        Err(scan_error) => match session.reconnect_if_needed() {
+                        Err(_) => match session.reconnect_if_needed() {
                             Ok(true) => match session.discover_ports(include_loopback) {
                                 Ok(ports) => ScanEvent::Reconnected(ports),
-                                Err(error) => ScanEvent::Error(format!(
-                                    "reconnected but scan failed: {error:#}"
-                                )),
+                                Err(_) => ScanEvent::Error,
                             },
-                            Ok(false) => ScanEvent::Error(format!("{scan_error:#}")),
-                            Err(error) => ScanEvent::Error(format!(
-                                "disconnected; reconnect failed: {error:#}"
-                            )),
+                            Ok(false) => ScanEvent::Error,
+                            Err(_) => ScanEvent::Error,
                         },
                     };
                     if scan_tx.send(event).is_err() {
@@ -333,13 +328,13 @@ pub fn run(
             }
 
             let footer = if form.is_some() {
-                format!("{gutter_pad}{}  │  {message}", InlineForm::help_line())
+                format!("{gutter_pad}{}", InlineForm::help_line())
             } else if show_help {
                 format!(
-                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  ? Help  q Quit  │  {message}"
+                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  ? Help  q Quit"
                 )
             } else {
-                format!("{gutter_pad}? Help  │  {message}")
+                format!("{gutter_pad}? Help")
             };
             frame.render_widget(
                 Paragraph::new(Line::from(footer))
@@ -370,26 +365,19 @@ pub fn run(
                                     index,
                                     tunnel,
                                     active_form.was_enabled,
-                                    &mut message,
                                 );
                             } else {
-                                enable(session, &mut tunnel, &mut message);
+                                enable(session, &mut tunnel);
                                 tunnels.push(tunnel);
                                 state.select(Some(tunnels.len() - 1));
                             }
                             form = None;
                         }
                         Ok(None) => {}
-                        Err(error) => message = format!("form error: {error:#}"),
+                        Err(_) => {}
                     }
                     if matches!(key.code, KeyCode::Esc) {
-                        let editing = form.as_ref().is_some_and(|f| f.edit_index.is_some());
                         form = None;
-                        message = if editing {
-                            "edit cancelled".into()
-                        } else {
-                            "add cancelled".into()
-                        };
                     }
                 } else {
                     match key.code {
@@ -403,7 +391,7 @@ pub fn run(
                         }
                         KeyCode::Char(' ') => {
                             if let Some(i) = state.selected() {
-                                toggle(session, &mut tunnels[i], &mut message);
+                                toggle(session, &mut tunnels[i]);
                             }
                         }
                         KeyCode::Enter | KeyCode::Char('e') => {
@@ -415,29 +403,19 @@ pub fn run(
                         KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
                         KeyCode::Char('d') => {
                             if let Some(i) = state.selected() {
-                                delete_tunnel(session, &mut tunnels, i, &mut message);
+                                delete_tunnel(session, &mut tunnels, i);
                                 state.select(
                                     (!tunnels.is_empty()).then_some(i.min(tunnels.len() - 1)),
                                 );
                             }
                         }
-                        KeyCode::Char('r') => match session.discover_ports(include_loopback) {
-                            Ok(found) => reconcile_scan(
-                                session,
-                                &mut tunnels,
-                                found,
-                                auto_forward,
-                                &mut message,
-                            ),
-                            Err(e) => message = format!("refresh failed: {e:#}"),
-                        },
+                        KeyCode::Char('r') => {
+                            if let Ok(found) = session.discover_ports(include_loopback) {
+                                reconcile_scan(session, &mut tunnels, found, auto_forward);
+                            }
+                        }
                         KeyCode::Char('?') => {
                             show_help = !show_help;
-                            message = if show_help {
-                                "help shown".into()
-                            } else {
-                                "help hidden".into()
-                            };
                         }
                         _ => {}
                     }
@@ -446,18 +424,12 @@ pub fn run(
             while let Ok(scan) = scan_rx.try_recv() {
                 match scan {
                     ScanEvent::Ports(found) => {
-                        reconcile_scan(session, &mut tunnels, found, auto_forward, &mut message)
+                        reconcile_scan(session, &mut tunnels, found, auto_forward)
                     }
-                    ScanEvent::Reconnected(found) => restore_after_reconnect(
-                        session,
-                        &mut tunnels,
-                        found,
-                        auto_forward,
-                        &mut message,
-                    ),
-                    ScanEvent::Error(error) => {
-                        message = format!("scan error; tunnels kept: {error}")
+                    ScanEvent::Reconnected(found) => {
+                        restore_after_reconnect(session, &mut tunnels, found, auto_forward)
                     }
+                    ScanEvent::Error => {}
                 }
             }
         };
@@ -506,7 +478,7 @@ fn move_selection(state: &mut TableState, len: usize, delta: isize) {
     state.select(Some((current + delta).rem_euclid(len as isize) as usize));
 }
 
-fn toggle(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
+fn toggle(session: &SshSession, tunnel: &mut Tunnel) {
     tunnel.error = None;
     if tunnel.enabled {
         let port = tunnel.bind_port.expect("enabled tunnel has a bind port");
@@ -514,7 +486,6 @@ fn toggle(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
             Ok(()) => {
                 tunnel.enabled = false;
                 tunnel.manual_off = true;
-                *message = format!("port {port} disabled");
             }
             Err(e) => tunnel.error = Some(format!("cancel failed: {e:#}")),
         }
@@ -522,10 +493,10 @@ fn toggle(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
     }
 
     tunnel.manual_off = false;
-    enable(session, tunnel, message);
+    enable(session, tunnel);
 }
 
-fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
+fn enable(session: &SshSession, tunnel: &mut Tunnel) {
     tunnel.error = None;
     let preferred = tunnel.requested_port;
     if tunnel.direction == Direction::Reverse {
@@ -538,7 +509,6 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
                 Ok(()) => {
                     tunnel.bind_port = Some(port);
                     tunnel.enabled = true;
-                    *message = format!("reverse port {port} enabled");
                     return;
                 }
                 Err(error) => last_error = Some(error),
@@ -560,11 +530,6 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
                     tunnel.bind_port = Some(port);
                     tunnel.enabled = true;
                     tunnel.protocol = detect_protocol(port);
-                    *message = if port == preferred {
-                        format!("port {port} enabled")
-                    } else {
-                        format!("local {preferred} busy; using {port}")
-                    };
                 }
                 Err(e) => tunnel.error = Some(format!("forward failed: {e:#}")),
             }
@@ -690,15 +655,12 @@ fn apply_edit(
     index: usize,
     mut replacement: Tunnel,
     was_enabled: bool,
-    message: &mut String,
 ) {
     let Some(existing) = tunnels.get(index) else {
-        *message = "edit failed: tunnel disappeared".into();
         return;
     };
     if was_enabled {
         let Some(bind) = existing.bind_port else {
-            *message = "edit failed: enabled tunnel has no bind port".into();
             return;
         };
         if let Err(error) = session.cancel(existing.direction, bind, existing.source_port) {
@@ -709,23 +671,14 @@ fn apply_edit(
     replacement.discovered = existing.discovered;
     replacement.present = existing.present;
     if was_enabled {
-        enable(session, &mut replacement, message);
-        if replacement.error.is_none() {
-            *message = "tunnel updated".into();
-        }
+        enable(session, &mut replacement);
     } else {
         replacement.manual_off = existing.manual_off;
-        *message = "tunnel updated".into();
     }
     tunnels[index] = replacement;
 }
 
-fn delete_tunnel(
-    session: &SshSession,
-    tunnels: &mut Vec<Tunnel>,
-    index: usize,
-    message: &mut String,
-) {
+fn delete_tunnel(session: &SshSession, tunnels: &mut Vec<Tunnel>, index: usize) {
     if tunnels[index].enabled {
         let tunnel = &tunnels[index];
         let bind = tunnel.bind_port.expect("enabled tunnel has bind port");
@@ -738,10 +691,8 @@ fn delete_tunnel(
         tunnels[index].enabled = false;
         tunnels[index].manual_off = true;
         tunnels[index].error = None;
-        *message = "discovered tunnel ignored for this session".into();
     } else {
         tunnels.remove(index);
-        *message = "manual tunnel deleted".into();
     }
 }
 
@@ -750,7 +701,6 @@ fn reconcile_scan(
     tunnels: &mut Vec<Tunnel>,
     found: Vec<RemoteListener>,
     auto_forward: bool,
-    message: &mut String,
 ) {
     for tunnel in tunnels
         .iter_mut()
@@ -761,7 +711,7 @@ fn reconcile_scan(
             tunnel.missing_scans = 0;
             apply_auto_label(tunnel, listener.process.as_deref());
             if auto_forward && !tunnel.enabled && !tunnel.manual_off {
-                enable(session, tunnel, message);
+                enable(session, tunnel);
             }
         } else {
             tunnel.missing_scans = tunnel.missing_scans.saturating_add(1);
@@ -772,7 +722,6 @@ fn reconcile_scan(
                     match session.cancel(Direction::Local, port, tunnel.source_port) {
                         Ok(()) => {
                             tunnel.enabled = false;
-                            *message = format!("remote port {} stopped", tunnel.source_port);
                         }
                         Err(error) => tunnel.error = Some(format!("cancel failed: {error:#}")),
                     }
@@ -790,7 +739,7 @@ fn reconcile_scan(
         }
         let mut tunnel = tunnel_from_listener(listener);
         if auto_forward {
-            enable(session, &mut tunnel, message);
+            enable(session, &mut tunnel);
         }
         tunnels.push(tunnel);
     }
@@ -801,7 +750,6 @@ fn restore_after_reconnect(
     tunnels: &mut Vec<Tunnel>,
     found: Vec<RemoteListener>,
     auto_forward: bool,
-    message: &mut String,
 ) {
     let wanted = tunnels.iter().map(|t| t.enabled).collect::<Vec<_>>();
     for tunnel in tunnels.iter_mut() {
@@ -809,17 +757,16 @@ fn restore_after_reconnect(
         tunnel.bind_port = None;
         tunnel.error = None;
     }
-    reconcile_scan(session, tunnels, found, auto_forward, message);
+    reconcile_scan(session, tunnels, found, auto_forward);
     for (index, was_enabled) in wanted.into_iter().enumerate() {
         if was_enabled
             && let Some(tunnel) = tunnels.get_mut(index)
             && !tunnel.enabled
             && (tunnel.direction == Direction::Reverse || tunnel.present)
         {
-            enable(session, tunnel, message);
+            enable(session, tunnel);
         }
     }
-    *message = "SSH reconnected; active tunnels restored".into();
 }
 
 #[cfg(test)]
