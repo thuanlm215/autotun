@@ -39,6 +39,50 @@ enum ScanEvent {
     Error(String),
 }
 
+struct InlineForm {
+    direction: Direction,
+    fields: [String; 3],
+    selected: usize,
+}
+
+impl InlineForm {
+    fn new(direction: Direction) -> Self {
+        Self {
+            direction,
+            fields: [String::new(), String::new(), String::new()],
+            selected: 0,
+        }
+    }
+
+    fn labels(&self) -> [&'static str; 3] {
+        match self.direction {
+            Direction::Local => ["Remote service", "Local bind", "Label"],
+            Direction::Reverse => ["Local service", "Remote bind", "Label"],
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        match self.direction {
+            Direction::Local => " Add local forward (-L) ",
+            Direction::Reverse => " Add reverse forward (-R) ",
+        }
+    }
+
+    fn tunnel(&self) -> Result<Tunnel> {
+        let source_port = parse_form_port(&self.fields[0], self.labels()[0])?;
+        let requested_port = if self.fields[1].is_empty() {
+            source_port
+        } else {
+            parse_form_port(&self.fields[1], self.labels()[1])?
+        };
+        let label = self.fields[2].trim().to_owned();
+        Ok(match self.direction {
+            Direction::Local => Tunnel::manual_local(source_port, requested_port, label),
+            Direction::Reverse => Tunnel::manual_reverse(source_port, requested_port, label),
+        })
+    }
+}
+
 struct ScanGuard(Arc<AtomicBool>);
 
 impl Drop for ScanGuard {
@@ -126,11 +170,14 @@ pub fn run(
             }
         });
 
+        let mut form = None::<InlineForm>;
         let result = loop {
             terminal.draw(|frame| {
+            let form_height = if form.is_some() { 4 } else { 0 };
             let areas = Layout::vertical([
                 Constraint::Length(3),
                 Constraint::Min(3),
+                Constraint::Length(form_height),
                 Constraint::Length(3),
             ])
             .split(frame.area());
@@ -174,11 +221,11 @@ pub fn run(
             let table = Table::new(
                 rows,
                 [
-                    Constraint::Length(12),
-                    Constraint::Length(18),
-                    Constraint::Length(12),
-                    Constraint::Length(12),
-                    Constraint::Min(12),
+                    Constraint::Length(15),
+                    Constraint::Length(24),
+                    Constraint::Length(16),
+                    Constraint::Length(16),
+                    Constraint::Min(16),
                 ],
             )
             .header(
@@ -193,12 +240,44 @@ pub fn run(
             .row_highlight_style(Style::default().bg(Color::DarkGray))
             .highlight_symbol("› ");
             frame.render_stateful_widget(table, areas[1], &mut state);
+
+            if let Some(form) = &form {
+                let labels = form.labels();
+                let fields = labels
+                    .iter()
+                    .zip(form.fields.iter())
+                    .enumerate()
+                    .map(|(index, (label, value))| {
+                        let value = if value.is_empty() && index == 1 {
+                            "same as service port"
+                        } else if value.is_empty() {
+                            ""
+                        } else {
+                            value
+                        };
+                        if index == form.selected {
+                            format!("[{label}: {value}]")
+                        } else {
+                            format!("{label}: {value}")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("   ");
+                frame.render_widget(
+                    Paragraph::new(vec![
+                        Line::from(fields),
+                        Line::from("Tab/Shift+Tab: field  Enter: next/save  Esc: cancel"),
+                    ])
+                    .block(Block::default().title(form.title()).borders(Borders::ALL)),
+                    areas[2],
+                );
+            }
             frame.render_widget(
                 Paragraph::new(Line::from(format!(
                     "↑/↓ Space toggle  a add -L  v add -R  e edit  d delete  c copy  r scan  q quit │ {message}"
                 )))
                 .block(Block::default().borders(Borders::ALL)),
-                areas[2],
+                areas[3],
             );
         })?;
 
@@ -209,60 +288,67 @@ pub fn run(
                 if key.kind != KeyEventKind::Press {
                     continue;
                 }
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        move_selection(&mut state, tunnels.len(), 1)
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        move_selection(&mut state, tunnels.len(), -1)
-                    }
-                    KeyCode::Char(' ') | KeyCode::Enter => {
-                        if let Some(i) = state.selected() {
-                            toggle(session, &mut tunnels[i], &mut message);
-                        }
-                    }
-                    KeyCode::Char('a') => match prompt_tunnel(&mut terminal, Direction::Local) {
+                if let Some(active_form) = form.as_mut() {
+                    match handle_inline_form(key.code, active_form) {
                         Ok(Some(mut tunnel)) => {
                             enable(session, &mut tunnel, &mut message);
                             tunnels.push(tunnel);
                             state.select(Some(tunnels.len() - 1));
+                            form = None;
                         }
-                        Ok(None) => message = "add cancelled".into(),
-                        Err(error) => message = format!("input error: {error:#}"),
-                    },
-                    KeyCode::Char('v') => match prompt_tunnel(&mut terminal, Direction::Reverse) {
-                        Ok(Some(mut tunnel)) => {
-                            enable(session, &mut tunnel, &mut message);
-                            tunnels.push(tunnel);
-                            state.select(Some(tunnels.len() - 1));
-                        }
-                        Ok(None) => message = "add cancelled".into(),
-                        Err(error) => message = format!("input error: {error:#}"),
-                    },
-                    KeyCode::Char('e') => {
-                        if let Some(i) = state.selected() {
-                            edit_tunnel(session, &mut terminal, &mut tunnels[i], &mut message)?;
-                        }
+                        Ok(None) => {}
+                        Err(error) => message = format!("form error: {error:#}"),
                     }
-                    KeyCode::Char('d') => {
-                        if let Some(i) = state.selected() {
-                            delete_tunnel(session, &mut tunnels, i, &mut message);
-                            state.select((!tunnels.is_empty()).then_some(i.min(tunnels.len() - 1)));
-                        }
+                    if matches!(key.code, KeyCode::Esc) {
+                        form = None;
+                        message = "add cancelled".into();
                     }
-                    KeyCode::Char('c') => {
-                        if let Some(tunnel) = state.selected().and_then(|i| tunnels.get(i)) {
-                            copy_address(tunnel, &mut message);
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            move_selection(&mut state, tunnels.len(), 1)
                         }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            move_selection(&mut state, tunnels.len(), -1)
+                        }
+                        KeyCode::Char(' ') | KeyCode::Enter => {
+                            if let Some(i) = state.selected() {
+                                toggle(session, &mut tunnels[i], &mut message);
+                            }
+                        }
+                        KeyCode::Char('a') => form = Some(InlineForm::new(Direction::Local)),
+                        KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
+                        KeyCode::Char('e') => {
+                            if let Some(i) = state.selected() {
+                                edit_tunnel(session, &mut terminal, &mut tunnels[i], &mut message)?;
+                            }
+                        }
+                        KeyCode::Char('d') => {
+                            if let Some(i) = state.selected() {
+                                delete_tunnel(session, &mut tunnels, i, &mut message);
+                                state.select(
+                                    (!tunnels.is_empty()).then_some(i.min(tunnels.len() - 1)),
+                                );
+                            }
+                        }
+                        KeyCode::Char('c') => {
+                            if let Some(tunnel) = state.selected().and_then(|i| tunnels.get(i)) {
+                                copy_address(tunnel, &mut message);
+                            }
+                        }
+                        KeyCode::Char('r') => match session.discover_ports(include_loopback) {
+                            Ok(found) => reconcile_scan(
+                                session,
+                                &mut tunnels,
+                                found,
+                                auto_forward,
+                                &mut message,
+                            ),
+                            Err(e) => message = format!("refresh failed: {e:#}"),
+                        },
+                        _ => {}
                     }
-                    KeyCode::Char('r') => match session.discover_ports(include_loopback) {
-                        Ok(found) => {
-                            reconcile_scan(session, &mut tunnels, found, auto_forward, &mut message)
-                        }
-                        Err(e) => message = format!("refresh failed: {e:#}"),
-                    },
-                    _ => {}
                 }
             }
             while let Ok(scan) = scan_rx.try_recv() {
@@ -287,6 +373,37 @@ pub fn run(
         scanner.join().expect("scanner thread panicked");
         result
     })
+}
+
+fn handle_inline_form(key: KeyCode, form: &mut InlineForm) -> Result<Option<Tunnel>> {
+    match key {
+        KeyCode::Tab | KeyCode::Down => form.selected = (form.selected + 1) % form.fields.len(),
+        KeyCode::BackTab | KeyCode::Up => {
+            form.selected = (form.selected + form.fields.len() - 1) % form.fields.len()
+        }
+        KeyCode::Backspace => {
+            form.fields[form.selected].pop();
+        }
+        KeyCode::Enter => {
+            if form.selected + 1 == form.fields.len() {
+                return form.tunnel().map(Some);
+            }
+            form.selected += 1;
+        }
+        KeyCode::Char(character) => form.fields[form.selected].push(character),
+        _ => {}
+    }
+    Ok(None)
+}
+
+fn parse_form_port(value: &str, name: &str) -> Result<u16> {
+    let port = value
+        .parse::<u16>()
+        .with_context(|| format!("{name} must be a TCP port from 1 to 65535"))?;
+    if port == 0 {
+        anyhow::bail!("{name} must be a TCP port from 1 to 65535");
+    }
+    Ok(port)
 }
 
 fn move_selection(state: &mut TableState, len: usize, delta: isize) {
@@ -364,10 +481,6 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
 }
 
 type AppTerminal = Terminal<CrosstermBackend<io::Stdout>>;
-
-fn prompt_tunnel(terminal: &mut AppTerminal, direction: Direction) -> Result<Option<Tunnel>> {
-    prompt_tunnel_with_defaults(terminal, direction, None)
-}
 
 fn prompt_tunnel_with_defaults(
     terminal: &mut AppTerminal,
@@ -606,4 +719,27 @@ fn restore_after_reconnect(
         }
     }
     *message = "SSH reconnected; active tunnels restored".into();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_local_form_uses_service_port_as_default_bind_port() {
+        let mut form = InlineForm::new(Direction::Local);
+        form.fields = ["3000".into(), String::new(), "frontend".into()];
+        let tunnel = form.tunnel().unwrap();
+        assert_eq!(tunnel.direction, Direction::Local);
+        assert_eq!(tunnel.source_port, 3000);
+        assert_eq!(tunnel.requested_port, 3000);
+        assert_eq!(tunnel.label, "frontend");
+    }
+
+    #[test]
+    fn inline_form_rejects_zero_port() {
+        let mut form = InlineForm::new(Direction::Reverse);
+        form.fields[0] = "0".into();
+        assert!(form.tunnel().is_err());
+    }
 }

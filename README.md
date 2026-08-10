@@ -112,13 +112,16 @@ Run `autotun --help` for the complete command-line reference.
 | --- | --- |
 | `↑` / `↓`, `j` / `k` | Select a tunnel |
 | `Space`, `Enter` | Enable or disable the selected tunnel |
-| `a` | Add a local forward (`-L`) |
-| `v` | Add a reverse forward (`-R`) |
+| `a` | Open the inline form for a local forward (`-L`) |
+| `v` | Open the inline form for a reverse forward (`-R`) |
 | `e` | Edit the selected tunnel's ports or label |
 | `d` | Delete a manual tunnel or ignore a discovered tunnel |
 | `c` | Copy the active bind address using OSC 52 |
 | `r` | Scan remote listeners immediately |
 | `q`, `Esc` | Close all tunnels and exit |
+
+The add form appears directly below the tunnel table. Use `Tab` or
+`Shift+Tab` to change fields, `Enter` to advance or save, and `Esc` to cancel.
 
 ## Forwarding behavior
 
