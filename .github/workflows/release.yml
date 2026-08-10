@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          test "v${cargo_version}" = "$GITHUB_REF_NAME"
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+          rustup target add "${{ matrix.target }}"
+
+      - name: Test
+        run: cargo test --locked --target "${{ matrix.target }}"
+
+      - name: Build static binary
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+
+      - name: Smoke test
+        run: "target/${{ matrix.target }}/release/autotun --version"
+
+      - name: Package
+        shell: bash
+        run: |
+          archive="autotun-${{ matrix.target }}.tar.gz"
+          mkdir -p dist/package
+          install -m 0755 "target/${{ matrix.target }}/release/autotun" dist/package/autotun
+          install -m 0644 LICENSE README.md dist/package/
+          tar -C dist/package -czf "dist/${archive}" autotun LICENSE README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autotun-${{ matrix.target }}
+          path: dist/autotun-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: autotun-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum autotun-*.tar.gz > SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "autotun $GITHUB_REF_NAME"

@@ -5,6 +5,7 @@ you toggle forwards without reconnecting. It uses an OpenSSH ControlMaster, so
 port discovery, `-L` forwards, and `-R` forwards share one SSH transport.
 
 ![status](https://img.shields.io/badge/status-production--ready-brightgreen)
+[![CI](https://github.com/thuanlm215/autotun/actions/workflows/ci.yml/badge.svg)](https://github.com/thuanlm215/autotun/actions/workflows/ci.yml)
 
 ## Features
 
