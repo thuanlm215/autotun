@@ -20,10 +20,10 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Layout},
+    layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
-    text::Line,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    text::{Line, Span},
+    widgets::{Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table, TableState},
 };
 
 use crate::{
@@ -77,8 +77,8 @@ impl InlineForm {
 
     fn labels(&self) -> [&'static str; 3] {
         match self.direction {
-            Direction::Local => ["Remote service", "Local bind", "Label"],
-            Direction::Reverse => ["Local service", "Remote bind", "Label"],
+            Direction::Local => ["Remote port", "Local port", "Label"],
+            Direction::Reverse => ["Local port", "Remote port", "Label"],
         }
     }
 
@@ -89,6 +89,10 @@ impl InlineForm {
             (true, Direction::Local) => " Edit forward (remote → local) ",
             (true, Direction::Reverse) => " Edit reverse (local → remote) ",
         }
+    }
+
+    fn help_line() -> &'static str {
+        "Tab/Shift+Tab: field  Enter: next/save  Esc: cancel"
     }
 
     fn tunnel(&self) -> Result<Tunnel> {
@@ -194,27 +198,46 @@ pub fn run(
         });
 
         let mut form = None::<InlineForm>;
-        let mut show_help = true;
+        let mut show_help = false;
         let result = loop {
             terminal.draw(|frame| {
-            let form_height = if form.is_some() { 4 } else { 0 };
-            let footer_height = if show_help { 3 } else { 3 };
+            let form_height = if form.is_some() { 5 } else { 0 };
             let areas = Layout::vertical([
                 Constraint::Min(3),
                 Constraint::Length(form_height),
-                Constraint::Length(footer_height),
+                Constraint::Length(3),
             ])
             .split(frame.area());
+
+            // Selection gutter (› + space). Help text uses spaces so it lines
+            // up with Direction. The border title uses the same width in ─
+            // glyphs so the top line stays continuous: ┌──autotun────
+            // (spaces would punch holes: ┌  autotun─).
+            const HIGHLIGHT: &str = "› ";
+            let gutter_width = HIGHLIGHT.chars().count();
+            let gutter_pad = " ".repeat(gutter_width);
+            let title_leader: String = "─".repeat(gutter_width);
+
             let rows = tunnels.iter().map(|t| {
                 let direction = if t.direction == Direction::Local {
                     "Forward"
                 } else {
                     "Reverse"
                 };
-                let bind = t
-                    .bind_port
-                    .map(|p| p.to_string())
-                    .unwrap_or_else(|| "auto".into());
+                let (remote_port, local_port) = match t.direction {
+                    Direction::Local => (
+                        t.source_port.to_string(),
+                        t.bind_port
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "auto".into()),
+                    ),
+                    Direction::Reverse => (
+                        t.bind_port
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| t.requested_port.to_string()),
+                        t.source_port.to_string(),
+                    ),
+                };
                 let status = t.error.as_deref().unwrap_or(if t.enabled {
                     "ON"
                 } else if t.manual_off {
@@ -228,9 +251,8 @@ pub fn run(
                 Row::new(vec![
                     Cell::from(direction),
                     Cell::from(if t.label.is_empty() { "—" } else { &t.label }),
-                    Cell::from(t.source_port.to_string()),
-                    Cell::from(bind),
-                    Cell::from(t.protocol.as_str()),
+                    Cell::from(remote_port),
+                    Cell::from(local_port),
                     Cell::from(url),
                     Cell::from(status),
                 ])
@@ -243,22 +265,20 @@ pub fn run(
             let table = Table::new(
                 rows,
                 [
-                    Constraint::Length(10),
-                    Constraint::Length(20),
-                    Constraint::Length(13),
-                    Constraint::Length(11),
-                    Constraint::Length(9),
-                    Constraint::Length(28),
-                    Constraint::Min(12),
+                    Constraint::Length(12), // Direction
+                    Constraint::Length(15), // Label
+                    Constraint::Length(12), // Remote port
+                    Constraint::Length(12), // Local port
+                    Constraint::Length(25), // URL
+                    Constraint::Min(12),    // Status
                 ],
             )
             .header(
                 Row::new([
                     "Direction",
                     "Label",
-                    "Service port",
-                    "Bind port",
-                    "Protocol",
+                    "Remote port",
+                    "Local port",
                     "URL",
                     "Status",
                 ])
@@ -266,55 +286,60 @@ pub fn run(
                 .top_margin(1),
             )
             .block(
-                // Title sits on the top border at the same left edge as the
-                // table columns (after the border glyph). Header top_margin
-                // adds breathing room under the title line.
                 Block::default()
-                    .title("autotun")
-                    .title_alignment(Alignment::Left)
+                    .title(format!("{title_leader}autotun"))
                     .borders(Borders::ALL),
             )
             .row_highlight_style(Style::default().bg(Color::DarkGray))
-            .highlight_symbol("› ");
+            .highlight_symbol(HIGHLIGHT)
+            .highlight_spacing(HighlightSpacing::Always);
             frame.render_stateful_widget(table, areas[0], &mut state);
 
             if let Some(form) = &form {
                 let labels = form.labels();
-                let fields = labels
+                let lines = labels
                     .iter()
                     .zip(form.fields.iter())
                     .enumerate()
                     .map(|(index, (label, value))| {
-                        let value = if value.is_empty() && index == 1 {
-                            "same as service port"
-                        } else if value.is_empty() {
-                            ""
-                        } else {
-                            value
+                        let placeholder = match (form.direction, index) {
+                            (Direction::Local, 1) if value.is_empty() => "same as remote port",
+                            (Direction::Reverse, 1) if value.is_empty() => "same as local port",
+                            _ => "",
                         };
-                        if index == form.selected {
-                            format!("[{label}: {value}]")
+                        let display = if value.is_empty() {
+                            placeholder
                         } else {
-                            format!("{label}: {value}")
+                            value.as_str()
+                        };
+                        let content = format!("{label}: {display}");
+                        if index == form.selected {
+                            Line::from(Span::styled(
+                                content,
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ))
+                        } else {
+                            Line::from(content)
                         }
                     })
-                    .collect::<Vec<_>>()
-                    .join("   ");
+                    .collect::<Vec<_>>();
                 frame.render_widget(
-                    Paragraph::new(vec![
-                        Line::from(fields),
-                        Line::from("Tab/Shift+Tab: field  Enter: next/save  Esc: cancel"),
-                    ])
-                    .block(Block::default().title(form.title()).borders(Borders::ALL)),
+                    Paragraph::new(lines)
+                        .block(Block::default().title(form.title()).borders(Borders::ALL)),
                     areas[1],
                 );
             }
-            let footer = if show_help {
+
+            let footer = if form.is_some() {
+                format!("{gutter_pad}{}  │  {message}", InlineForm::help_line())
+            } else if show_help {
                 format!(
-                    "↑↓ Select  Space Toggle  Enter Edit  a Add forward  v Add reverse  d Remove  r Rescan  ? Help  q Quit  │  {message}"
+                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  ? Help  q Quit  │  {message}"
                 )
             } else {
-                format!("? Help  │  {message}")
+                format!("{gutter_pad}? Help  │  {message}")
             };
             frame.render_widget(
                 Paragraph::new(Line::from(footer))
