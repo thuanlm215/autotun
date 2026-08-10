@@ -13,14 +13,14 @@ use std::{
 use anyhow::{Context, Result};
 use crossterm::{
     cursor::Show,
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Layout},
+    layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
@@ -28,7 +28,7 @@ use ratatui::{
 
 use crate::{
     ports::{
-        Direction, MAX_PORT_FALLBACKS, RemoteListener, Tunnel, UrlScheme, available_local_port,
+        Direction, MAX_PORT_FALLBACKS, Protocol, RemoteListener, Tunnel, available_local_port,
     },
     ssh::SshSession,
 };
@@ -194,13 +194,15 @@ pub fn run(
         });
 
         let mut form = None::<InlineForm>;
+        let mut show_help = true;
         let result = loop {
             terminal.draw(|frame| {
             let form_height = if form.is_some() { 4 } else { 0 };
+            let footer_height = if show_help { 3 } else { 3 };
             let areas = Layout::vertical([
                 Constraint::Min(3),
                 Constraint::Length(form_height),
-                Constraint::Length(3),
+                Constraint::Length(footer_height),
             ])
             .split(frame.area());
             let rows = tunnels.iter().map(|t| {
@@ -222,19 +224,13 @@ pub fn run(
                 } else {
                     "off"
                 });
-                let url = if t.direction == Direction::Local
-                    && t.enabled
-                    && t.scheme != UrlScheme::Unknown
-                {
-                    format!("{}://127.0.0.1:{}", t.scheme.as_str(), t.bind_port.unwrap())
-                } else {
-                    "—".into()
-                };
+                let url = tunnel_url(t);
                 Row::new(vec![
                     Cell::from(direction),
                     Cell::from(if t.label.is_empty() { "—" } else { &t.label }),
                     Cell::from(t.source_port.to_string()),
                     Cell::from(bind),
+                    Cell::from(t.protocol.as_str()),
                     Cell::from(url),
                     Cell::from(status),
                 ])
@@ -248,11 +244,12 @@ pub fn run(
                 rows,
                 [
                     Constraint::Length(10),
-                    Constraint::Length(24),
-                    Constraint::Length(16),
-                    Constraint::Length(16),
-                    Constraint::Length(30),
-                    Constraint::Min(14),
+                    Constraint::Length(20),
+                    Constraint::Length(13),
+                    Constraint::Length(11),
+                    Constraint::Length(9),
+                    Constraint::Length(28),
+                    Constraint::Min(12),
                 ],
             )
             .header(
@@ -261,14 +258,20 @@ pub fn run(
                     "Label",
                     "Service port",
                     "Bind port",
+                    "Protocol",
                     "URL",
                     "Status",
                 ])
-                    .style(Style::default().add_modifier(Modifier::BOLD)),
+                .style(Style::default().add_modifier(Modifier::BOLD))
+                .top_margin(1),
             )
             .block(
+                // Title sits on the top border at the same left edge as the
+                // table columns (after the border glyph). Header top_margin
+                // adds breathing room under the title line.
                 Block::default()
-                    .title(" Tunnels ")
+                    .title("autotun")
+                    .title_alignment(Alignment::Left)
                     .borders(Borders::ALL),
             )
             .row_highlight_style(Style::default().bg(Color::DarkGray))
@@ -306,11 +309,16 @@ pub fn run(
                     areas[1],
                 );
             }
+            let footer = if show_help {
+                format!(
+                    "↑↓ Select  Space Toggle  Enter Edit  a Add forward  v Add reverse  d Remove  r Rescan  ? Help  q Quit  │  {message}"
+                )
+            } else {
+                format!("? Help  │  {message}")
+            };
             frame.render_widget(
-                Paragraph::new(Line::from(format!(
-                    "↑↓ Select  Space Toggle  a Add forward  v Add reverse  e Edit  d Remove  r Rescan  q Quit  │  {message}"
-                )))
-                .block(Block::default().borders(Borders::ALL)),
+                Paragraph::new(Line::from(footer))
+                    .block(Block::default().borders(Borders::ALL)),
                 areas[2],
             );
         })?;
@@ -321,6 +329,11 @@ pub fn run(
                 };
                 if key.kind != KeyEventKind::Press {
                     continue;
+                }
+                if key.code == KeyCode::Char('c')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    break Ok(());
                 }
                 if let Some(active_form) = form.as_mut() {
                     match handle_inline_form(key.code, active_form) {
@@ -355,25 +368,26 @@ pub fn run(
                     }
                 } else {
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('q') => break Ok(()),
+                        KeyCode::Esc => {}
                         KeyCode::Down | KeyCode::Char('j') => {
                             move_selection(&mut state, tunnels.len(), 1)
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
                             move_selection(&mut state, tunnels.len(), -1)
                         }
-                        KeyCode::Char(' ') | KeyCode::Enter => {
+                        KeyCode::Char(' ') => {
                             if let Some(i) = state.selected() {
                                 toggle(session, &mut tunnels[i], &mut message);
                             }
                         }
-                        KeyCode::Char('a') => form = Some(InlineForm::new(Direction::Local)),
-                        KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
-                        KeyCode::Char('e') => {
+                        KeyCode::Enter | KeyCode::Char('e') => {
                             if let Some(i) = state.selected() {
                                 form = Some(InlineForm::edit(&tunnels[i], i));
                             }
                         }
+                        KeyCode::Char('a') => form = Some(InlineForm::new(Direction::Local)),
+                        KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
                         KeyCode::Char('d') => {
                             if let Some(i) = state.selected() {
                                 delete_tunnel(session, &mut tunnels, i, &mut message);
@@ -392,6 +406,14 @@ pub fn run(
                             ),
                             Err(e) => message = format!("refresh failed: {e:#}"),
                         },
+                        KeyCode::Char('?') => {
+                            show_help = !show_help;
+                            message = if show_help {
+                                "help shown".into()
+                            } else {
+                                "help hidden".into()
+                            };
+                        }
                         _ => {}
                     }
                 }
@@ -512,7 +534,7 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
                 Ok(()) => {
                     tunnel.bind_port = Some(port);
                     tunnel.enabled = true;
-                    tunnel.scheme = detect_web_scheme(port);
+                    tunnel.protocol = detect_protocol(port);
                     *message = if port == preferred {
                         format!("port {port} enabled")
                     } else {
@@ -526,14 +548,30 @@ fn enable(session: &SshSession, tunnel: &mut Tunnel, message: &mut String) {
     }
 }
 
-fn detect_web_scheme(port: u16) -> UrlScheme {
-    if probe_tls(port) {
-        UrlScheme::Https
-    } else if probe_http(port) {
-        UrlScheme::Http
+fn tunnel_url(tunnel: &Tunnel) -> String {
+    if tunnel.direction == Direction::Local
+        && tunnel.enabled
+        && let Some(port) = tunnel.bind_port
+    {
+        format!("{}://127.0.0.1:{port}", tunnel.protocol.as_str())
     } else {
-        UrlScheme::Unknown
+        "—".into()
     }
+}
+
+fn detect_protocol(port: u16) -> Protocol {
+    // TLS endpoints are reported as https. Distinguishing wss would need a full
+    // TLS handshake, which is intentionally out of scope for this probe.
+    if probe_tls(port) {
+        return Protocol::Https;
+    }
+    if probe_websocket(port) {
+        return Protocol::Ws;
+    }
+    if probe_http(port) {
+        return Protocol::Http;
+    }
+    Protocol::Tcp
 }
 
 fn open_probe_stream(port: u16) -> Option<TcpStream> {
@@ -576,6 +614,32 @@ fn probe_http(port: u16) -> bool {
     }
     let mut prefix = [0_u8; 5];
     stream.read_exact(&mut prefix).is_ok() && prefix == *b"HTTP/"
+}
+
+fn probe_websocket(port: u16) -> bool {
+    let Some(mut stream) = open_probe_stream(port) else {
+        return false;
+    };
+    let request = concat!(
+        "GET / HTTP/1.1\r\n",
+        "Host: 127.0.0.1\r\n",
+        "Upgrade: websocket\r\n",
+        "Connection: Upgrade\r\n",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+        "Sec-WebSocket-Version: 13\r\n",
+        "\r\n",
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut buf = [0_u8; 32];
+    match stream.read(&mut buf) {
+        Ok(n) if n >= 12 => {
+            let text = String::from_utf8_lossy(&buf[..n]);
+            text.starts_with("HTTP/1.1 101") || text.starts_with("HTTP/1.0 101")
+        }
+        _ => false,
+    }
 }
 
 fn tunnel_from_listener(listener: RemoteListener) -> Tunnel {
@@ -757,18 +821,19 @@ mod tests {
     }
 
     #[test]
-    fn detects_http_and_tls_responses() {
+    fn detects_http_tls_and_websocket_protocols() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
-            for _ in 0..2 {
+            // Probes: TLS (fail), WebSocket (fail), HTTP (match).
+            for _ in 0..3 {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut request = [0_u8; 128];
+                let mut request = [0_u8; 256];
                 let _ = stream.read(&mut request);
                 stream.write_all(b"HTTP/1.0 200 OK\r\n\r\n").unwrap();
             }
         });
-        assert_eq!(detect_web_scheme(port), UrlScheme::Http);
+        assert_eq!(detect_protocol(port), Protocol::Http);
         server.join().unwrap();
 
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
@@ -779,7 +844,41 @@ mod tests {
             let _ = stream.read(&mut request);
             stream.write_all(&[0x16, 0x03, 0x03, 0x00, 0x00]).unwrap();
         });
-        assert_eq!(detect_web_scheme(port), UrlScheme::Https);
+        assert_eq!(detect_protocol(port), Protocol::Https);
         server.join().unwrap();
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            // TLS ClientHello first (ignored), then WebSocket upgrade.
+            for response in [
+                &b"HTTP/1.1 400 Bad Request\r\n\r\n"[..],
+                &b"HTTP/1.1 101 Switching Protocols\r\n\r\n"[..],
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 512];
+                let _ = stream.read(&mut request);
+                stream.write_all(response).unwrap();
+            }
+        });
+        assert_eq!(detect_protocol(port), Protocol::Ws);
+        server.join().unwrap();
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // No accept — connection fails / times out → plain TCP.
+        assert_eq!(detect_protocol(port), Protocol::Tcp);
+        drop(listener);
+    }
+
+    #[test]
+    fn tunnel_url_includes_protocol_for_enabled_local() {
+        let mut tunnel = Tunnel::local(3000);
+        tunnel.enabled = true;
+        tunnel.bind_port = Some(3000);
+        tunnel.protocol = Protocol::Https;
+        assert_eq!(tunnel_url(&tunnel), "https://127.0.0.1:3000");
+        tunnel.enabled = false;
+        assert_eq!(tunnel_url(&tunnel), "—");
     }
 }

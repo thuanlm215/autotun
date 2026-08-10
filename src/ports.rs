@@ -10,19 +10,29 @@ pub enum Direction {
     Reverse,
 }
 
+/// Application-layer protocol guessed for a forwarded TCP service.
+///
+/// SSH tunnels are always TCP; this describes what speaks on top of that
+/// stream when we can detect it (HTTP(S), WebSocket, or plain TCP).
+/// `Wss` is reserved for TLS WebSocket endpoints once a full TLS probe exists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UrlScheme {
-    Unknown,
+pub enum Protocol {
+    Tcp,
     Http,
     Https,
+    Ws,
+    #[allow(dead_code)]
+    Wss,
 }
 
-impl UrlScheme {
+impl Protocol {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Unknown => "",
+            Self::Tcp => "tcp",
             Self::Http => "http",
             Self::Https => "https",
+            Self::Ws => "ws",
+            Self::Wss => "wss",
         }
     }
 }
@@ -40,7 +50,7 @@ pub struct Tunnel {
     pub requested_port: u16,
     pub label: String,
     pub discovered: bool,
-    pub scheme: UrlScheme,
+    pub protocol: Protocol,
 }
 
 impl Tunnel {
@@ -57,7 +67,7 @@ impl Tunnel {
             requested_port: remote_port,
             label: String::new(),
             discovered: true,
-            scheme: UrlScheme::Unknown,
+            protocol: Protocol::Tcp,
         }
     }
 
@@ -74,7 +84,7 @@ impl Tunnel {
             requested_port: local_port,
             label: String::new(),
             discovered: false,
-            scheme: UrlScheme::Unknown,
+            protocol: Protocol::Tcp,
         }
     }
 
@@ -91,7 +101,7 @@ impl Tunnel {
             requested_port: local_port,
             label,
             discovered: false,
-            scheme: UrlScheme::Unknown,
+            protocol: Protocol::Tcp,
         }
     }
 
