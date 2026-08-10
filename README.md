@@ -12,6 +12,8 @@ reverse tunnels without reconnecting.
 Existing SSH configuration works as usual: aliases, keys, agents, `ProxyJump`,
 and custom options.
 
+![autotun TUI showing forward and reverse SSH tunnels](docs/screenshot.png)
+
 ## Features
 
 - Discovers remote TCP listeners and auto-forwards them (see
