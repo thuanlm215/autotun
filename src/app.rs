@@ -165,6 +165,7 @@ pub fn run(
     let scanning = Arc::new(AtomicBool::new(true));
     let scanner_flag = Arc::clone(&scanning);
     let interval = Duration::from_secs(interval_seconds);
+    let destination = session.destination().to_owned();
     thread::scope(|scope| -> Result<()> {
         let _scan_guard = ScanGuard(Arc::clone(&scanning));
         let scanner = scope.spawn(|| {
@@ -192,13 +193,46 @@ pub fn run(
         });
 
         let mut form = None::<InlineForm>;
-        let mut show_help = true;
+        let mut show_help = false;
+        let mut connected = true;
+        let mut filter = None::<String>;
         let result = loop {
+            // Recompute visible indices based on filter
+            let visible_indices: Vec<usize> = tunnels
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| {
+                    if let Some(query) = &filter {
+                        let q = query.to_lowercase();
+                        t.label.to_lowercase().contains(&q)
+                            || t.source_port.to_string().contains(&q)
+                            || t.bind_port
+                                .map(|p| p.to_string().contains(&q))
+                                .unwrap_or(false)
+                    } else {
+                        true
+                    }
+                })
+                .map(|(i, _)| i)
+                .collect();
+            // Clamp selection to visible range
+            if visible_indices.is_empty() {
+                state.select(None);
+            } else if let Some(sel) = state.selected() {
+                if sel >= visible_indices.len() {
+                    state.select(Some(visible_indices.len() - 1));
+                }
+            } else {
+                state.select(Some(0));
+            }
+
             terminal.draw(|frame| {
             let form_height = if form.is_some() { 5 } else { 0 };
+            let filter_height = if filter.is_some() { 3 } else { 0 };
             let areas = Layout::vertical([
                 Constraint::Min(3),
                 Constraint::Length(form_height),
+                Constraint::Length(filter_height),
                 Constraint::Length(3),
             ])
             .split(frame.area());
@@ -212,7 +246,11 @@ pub fn run(
             let gutter_pad = " ".repeat(gutter_width);
             let title_leader: String = "─".repeat(gutter_width);
 
-            let rows = tunnels.iter().map(|t| {
+            let status_indicator = if connected { "●" } else { "○ reconnecting" };
+            let status_style = if connected { Color::Green } else { Color::Yellow };
+
+            let rows = visible_indices.iter().map(|&i| {
+                let t = &tunnels[i];
                 let direction = if t.direction == Direction::Local {
                     "Forward"
                 } else {
@@ -282,7 +320,10 @@ pub fn run(
             )
             .block(
                 Block::default()
-                    .title(format!("{title_leader}autotun"))
+                    .title(Line::from(vec![
+                        Span::raw(format!("{title_leader}autotun─{destination} ")),
+                        Span::styled(status_indicator, Style::default().fg(status_style)),
+                    ]))
                     .borders(Borders::ALL),
             )
             .row_highlight_style(Style::default().bg(Color::DarkGray))
@@ -327,11 +368,26 @@ pub fn run(
                 );
             }
 
+            if let Some(query) = &filter {
+                let filter_line = Line::from(vec![
+                    Span::styled("/ ", Style::default().fg(Color::Yellow)),
+                    Span::raw(query.as_str()),
+                    Span::styled("█", Style::default().fg(Color::Yellow)),
+                ]);
+                frame.render_widget(
+                    Paragraph::new(filter_line)
+                        .block(Block::default().title(" Filter ").borders(Borders::ALL)),
+                    areas[2],
+                );
+            }
+
             let footer = if form.is_some() {
                 format!("{gutter_pad}{}", InlineForm::help_line())
+            } else if filter.is_some() {
+                format!("{gutter_pad}Type to filter  Esc Clear  Enter Confirm")
             } else if show_help {
                 format!(
-                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  ? Help  q Quit"
+                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  c Copy URL  / Filter  ? Help  q Quit"
                 )
             } else {
                 format!("{gutter_pad}? Help")
@@ -339,7 +395,7 @@ pub fn run(
             frame.render_widget(
                 Paragraph::new(Line::from(footer))
                     .block(Block::default().borders(Borders::ALL)),
-                areas[2],
+                areas[3],
             );
         })?;
 
@@ -377,39 +433,81 @@ pub fn run(
                     if matches!(key.code, KeyCode::Esc) {
                         form = None;
                     }
+                } else if let Some(query) = filter.as_mut() {
+                    // Filter input mode
+                    match key.code {
+                        KeyCode::Esc => {
+                            filter = None;
+                        }
+                        KeyCode::Enter => {
+                            // Keep filter active but exit input mode
+                            if query.is_empty() {
+                                filter = None;
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            query.pop();
+                            if query.is_empty() {
+                                filter = None;
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            query.push(c);
+                        }
+                        _ => {}
+                    }
                 } else {
                     match key.code {
                         KeyCode::Char('q') => break Ok(()),
                         KeyCode::Esc => {}
                         KeyCode::Down | KeyCode::Char('j') => {
-                            move_selection(&mut state, tunnels.len(), 1)
+                            move_selection(&mut state, visible_indices.len(), 1)
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
-                            move_selection(&mut state, tunnels.len(), -1)
+                            move_selection(&mut state, visible_indices.len(), -1)
                         }
                         KeyCode::Char(' ') => {
-                            if let Some(i) = state.selected() {
+                            if let Some(vi) = state.selected()
+                                && let Some(&i) = visible_indices.get(vi)
+                            {
                                 toggle(session, &mut tunnels[i]);
                             }
                         }
                         KeyCode::Enter | KeyCode::Char('e') => {
-                            if let Some(i) = state.selected() {
+                            if let Some(vi) = state.selected()
+                                && let Some(&i) = visible_indices.get(vi)
+                            {
                                 form = Some(InlineForm::edit(&tunnels[i], i));
                             }
                         }
                         KeyCode::Char('a') => form = Some(InlineForm::new(Direction::Local)),
                         KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
                         KeyCode::Char('d') => {
-                            if let Some(i) = state.selected() {
+                            if let Some(vi) = state.selected()
+                                && let Some(&i) = visible_indices.get(vi)
+                            {
                                 delete_tunnel(session, &mut tunnels, i);
-                                state.select(
-                                    (!tunnels.is_empty()).then_some(i.min(tunnels.len() - 1)),
-                                );
+                                if tunnels.is_empty() {
+                                    state.select(None);
+                                }
                             }
                         }
                         KeyCode::Char('r') => {
                             if let Ok(found) = session.discover_ports(include_loopback) {
                                 reconcile_scan(session, &mut tunnels, found, auto_forward);
+                            }
+                        }
+                        KeyCode::Char('/') => {
+                            filter = Some(String::new());
+                        }
+                        KeyCode::Char('c') => {
+                            if let Some(vi) = state.selected()
+                                && let Some(&i) = visible_indices.get(vi)
+                            {
+                                let url = tunnel_url(&tunnels[i]);
+                                if url != "—" {
+                                    copy_to_clipboard(&url);
+                                }
                             }
                         }
                         KeyCode::Char('?') => {
@@ -422,12 +520,16 @@ pub fn run(
             while let Ok(scan) = scan_rx.try_recv() {
                 match scan {
                     ScanEvent::Ports(found) => {
-                        reconcile_scan(session, &mut tunnels, found, auto_forward)
+                        connected = true;
+                        reconcile_scan(session, &mut tunnels, found, auto_forward);
                     }
                     ScanEvent::Reconnected(found) => {
-                        restore_after_reconnect(session, &mut tunnels, found, auto_forward)
+                        connected = true;
+                        restore_after_reconnect(session, &mut tunnels, found, auto_forward);
                     }
-                    ScanEvent::Error => {}
+                    ScanEvent::Error => {
+                        connected = false;
+                    }
                 }
             }
         };
@@ -543,6 +645,41 @@ fn tunnel_url(tunnel: &Tunnel) -> String {
     } else {
         "—".into()
     }
+}
+
+/// Copy text to the system clipboard using the OSC 52 escape sequence.
+/// Supported by most modern terminals (kitty, alacritty, wezterm, foot, tmux).
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    let encoded = base64_encode(text.as_bytes());
+    // OSC 52: \x1b]52;c;<base64>\x07
+    let _ = write!(io::stdout(), "\x1b]52;c;{encoded}\x07");
+    let _ = io::stdout().flush();
+}
+
+/// Minimal base64 encoder (no external dependency needed).
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }
 
 fn detect_protocol(port: u16) -> Protocol {

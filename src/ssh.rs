@@ -18,6 +18,10 @@ pub struct SshSession {
 }
 
 impl SshSession {
+    pub fn destination(&self) -> &str {
+        &self.destination
+    }
+
     pub fn connect(destination: String, socket: PathBuf, extra_args: Vec<String>) -> Result<Self> {
         Self::start_master(&destination, &socket, &extra_args, false)?;
         Ok(Self {
