@@ -32,7 +32,10 @@ const FONT_BODY: f32 = 14.5;
 const FONT_HEADER: f32 = 13.5;
 const FONT_PILL: f32 = 13.0;
 const ROW_H: f32 = 36.0;
+const ROW_INSET: f32 = 12.0;
 const TABLE_BOTTOM_GAP: f32 = 12.0;
+const AUTHOR_NAME: &str = "thuanlm215";
+const AUTHOR_URL: &str = "https://github.com/thuanlm215/autotun";
 
 pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -168,11 +171,22 @@ impl eframe::App for GuiApp {
         } else {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title("autotun".into()));
         }
+        egui::TopBottomPanel::bottom("credits")
+            .show_separator_line(false)
+            .frame(egui::Frame::new().inner_margin(Margin {
+                left: 16,
+                right: 20,
+                top: 4,
+                bottom: 10,
+            }))
+            .show(ctx, |ui| {
+                ui.vertical_centered(author_footer);
+            });
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::central_panel(&ctx.style()).inner_margin(Margin {
                     left: 16,
-                    right: 16,
+                    right: 20,
                     top: 14,
                     bottom: 18,
                 }),
@@ -189,26 +203,24 @@ impl eframe::App for GuiApp {
 
 impl GuiApp {
     fn connect_ui(&mut self, ui: &mut egui::Ui) {
-        ui.vertical_centered(|ui| {
-            ui.add_space(28.0);
+        ui.with_layout(Layout::top_down(Align::Center), |ui| {
+            ui.add_space(36.0);
             ui.heading(RichText::new("autotun").size(26.0));
             ui.label(
                 RichText::new("Connect over SSH and manage port forwards.")
                     .color(MUTED)
-                    .size(14.0),
+                    .size(14.5),
             );
-        });
-        ui.add_space(20.0);
+            ui.add_space(22.0);
 
-        let card_width = 500.0_f32.min(ui.available_width());
-        ui.horizontal(|ui| {
-            let pad = ((ui.available_width() - card_width) * 0.5).max(0.0);
-            ui.add_space(pad);
+            let inner_width = 460.0_f32.min(ui.available_width() - 8.0);
             card().show(ui, |ui| {
-                ui.set_width(card_width - 36.0);
+                ui.set_width(inner_width);
+                ui.spacing_mut().item_spacing = Vec2::new(12.0, 10.0);
                 egui::Grid::new("connect")
                     .num_columns(2)
                     .spacing([12.0, 10.0])
+                    .min_col_width(120.0)
                     .show(ui, |ui| {
                         ui.label("Destination");
                         ui.add(
@@ -246,17 +258,20 @@ impl GuiApp {
                     });
 
                 ui.add_space(10.0);
-                ui.checkbox(
-                    &mut self.auto_forward,
-                    "Auto-forward discovered remote ports",
-                );
-                ui.checkbox(
-                    &mut self.include_loopback,
-                    "Include remote loopback listeners",
-                );
+                ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+                    ui.set_width(inner_width);
+                    ui.checkbox(
+                        &mut self.auto_forward,
+                        "Auto-forward discovered remote ports",
+                    );
+                    ui.checkbox(
+                        &mut self.include_loopback,
+                        "Include remote loopback listeners",
+                    );
+                });
                 ui.add_space(14.0);
                 if ui
-                    .add_sized([ui.available_width(), 32.0], primary_button("Connect"))
+                    .add_sized([inner_width, 34.0], primary_button("Connect"))
                     .clicked()
                 {
                     self.try_connect();
@@ -568,6 +583,17 @@ fn primary_button(label: &str) -> egui::Button<'static> {
         .fill(ACCENT)
 }
 
+fn author_footer(ui: &mut egui::Ui) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(RichText::new("by").color(MUTED).size(13.0));
+        ui.hyperlink_to(
+            RichText::new(AUTHOR_NAME).color(CLIP_COLOR).size(13.0),
+            AUTHOR_URL,
+        );
+    });
+}
+
 fn status_dot(ui: &mut egui::Ui, color: Color32, text: &str) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
@@ -641,7 +667,7 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
         .inner_margin(Margin::same(10))
         .outer_margin(Margin {
             left: 0,
-            right: 0,
+            right: 12,
             top: 0,
             bottom: TABLE_BOTTOM_GAP as i8,
         })
@@ -673,6 +699,7 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
                         paint_row_bg(ui, row_i);
                         ui.horizontal(|ui| {
                             ui.set_height(ROW_H);
+                            ui.add_space(ROW_INSET);
                             let direction = if tunnel.direction == Direction::Local {
                                 "Forward"
                             } else {
@@ -768,6 +795,7 @@ fn header_row(ui: &mut egui::Ui, widths: &[f32; 7]) {
         .rect_filled(rect, CornerRadius::same(5), HEADER_FILL);
     ui.horizontal(|ui| {
         ui.set_height(ROW_H);
+        ui.add_space(ROW_INSET);
         for (i, title) in ["Direction", "Label", "Remote", "Local", "URL", "Status", ""]
             .into_iter()
             .enumerate()
