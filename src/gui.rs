@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use eframe::egui::{
-    self, Align, Color32, CornerRadius, Layout, Margin, Rect, RichText, Stroke, Vec2,
+    self, Align, Color32, CornerRadius, FontFamily, FontId, Layout, Margin, Rect, RichText, Stroke,
+    TextStyle, Vec2,
 };
 
 use crate::{
@@ -22,19 +23,23 @@ const CLIP_COLOR: Color32 = Color32::from_rgb(130, 196, 220);
 const CARD_FILL: Color32 = Color32::from_rgb(30, 32, 38);
 const CARD_STROKE: Color32 = Color32::from_rgb(52, 56, 64);
 const TABLE_FILL: Color32 = Color32::from_rgb(26, 28, 33);
-const ROW_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10);
-const ROW_STRIPE: Color32 = Color32::from_rgba_premultiplied(5, 5, 5, 5);
+const ROW_HOVER: Color32 = Color32::from_rgb(40, 44, 52);
+const ROW_STRIPE: Color32 = Color32::from_rgb(30, 32, 38);
 const HEADER_FILL: Color32 = Color32::from_rgb(34, 36, 42);
-const DANGER_FILL: Color32 = Color32::from_rgb(62, 36, 38);
-const DANGER_TEXT: Color32 = Color32::from_rgb(236, 150, 150);
-const ROW_H: f32 = 30.0;
+const DANGER_FILL: Color32 = Color32::from_rgb(92, 42, 46);
+const DANGER_TEXT: Color32 = Color32::from_rgb(255, 186, 186);
+const FONT_BODY: f32 = 14.5;
+const FONT_HEADER: f32 = 13.5;
+const FONT_PILL: f32 = 13.0;
+const ROW_H: f32 = 36.0;
+const TABLE_BOTTOM_GAP: f32 = 12.0;
 
 pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("autotun")
             .with_inner_size([960.0, 560.0])
-            .with_min_inner_size([720.0, 400.0]),
+            .with_min_inner_size([840.0, 420.0]),
         ..Default::default()
     };
     let app = GuiApp::from_cli(cli);
@@ -164,7 +169,14 @@ impl eframe::App for GuiApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title("autotun".into()));
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(16))
+            .frame(
+                egui::Frame::central_panel(&ctx.style()).inner_margin(Margin {
+                    left: 16,
+                    right: 16,
+                    top: 14,
+                    bottom: 18,
+                }),
+            )
             .show(ctx, |ui| {
                 if self.session.is_some() {
                     self.session_ui(ui);
@@ -278,9 +290,10 @@ impl GuiApp {
         };
 
         ui.add_space(10.0);
-        filter_bar(ui, session);
         clip_banner(ui, session);
-        ui.add_space(8.0);
+        if session.clip_notice.is_some() {
+            ui.add_space(8.0);
+        }
 
         let mut save_form = false;
         let mut cancel_form = false;
@@ -417,16 +430,16 @@ fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi) {
         .filter(|tunnel| tunnel_matches(tunnel, &filter))
         .count();
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Filter").color(MUTED));
+        ui.label(RichText::new("Filter").color(MUTED).size(FONT_HEADER));
         ui.add(
             egui::TextEdit::singleline(&mut session.filter)
-                .desired_width(260.0)
+                .desired_width(280.0)
                 .hint_text("label or port"),
         );
         ui.label(
             RichText::new(format!("{shown} / {total}"))
                 .color(MUTED)
-                .small(),
+                .size(FONT_HEADER),
         );
     });
 }
@@ -496,7 +509,28 @@ fn parse_ssh_args(text: &str) -> Vec<String> {
 fn apply_theme(ctx: &egui::Context) {
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
-    style.spacing.button_padding = Vec2::new(10.0, 5.0);
+    style.spacing.button_padding = Vec2::new(10.0, 6.0);
+    style.spacing.interact_size.y = 26.0;
+    style.text_styles.insert(
+        TextStyle::Small,
+        FontId::new(12.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Body,
+        FontId::new(FONT_BODY, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Button,
+        FontId::new(14.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Heading,
+        FontId::new(22.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Monospace,
+        FontId::new(14.0, FontFamily::Monospace),
+    );
 
     let mut visuals = egui::Visuals::dark();
     visuals.override_text_color = Some(Color32::from_rgb(214, 218, 224));
@@ -547,7 +581,6 @@ fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi) {
     let Some(notice) = &session.clip_notice else {
         return;
     };
-    ui.add_space(8.0);
     let (fill, stroke) = match notice {
         ClipNotice::Success(_) => (
             Color32::from_rgb(28, 42, 48),
@@ -605,12 +638,20 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
         .fill(TABLE_FILL)
         .stroke(Stroke::new(1.0_f32, CARD_STROKE))
         .corner_radius(8)
-        .inner_margin(Margin::same(8))
+        .inner_margin(Margin::same(10))
+        .outer_margin(Margin {
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: TABLE_BOTTOM_GAP as i8,
+        })
         .show(ui, |ui| {
-            ui.set_min_height((remaining - 4.0).max(140.0));
+            ui.set_min_height((remaining - TABLE_BOTTOM_GAP - 8.0).max(140.0));
+            filter_bar(ui, session);
+            ui.add_space(6.0);
             let widths = col_widths(ui.available_width());
             header_row(ui, &widths);
-            ui.add_space(2.0);
+            ui.add_space(4.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
@@ -685,27 +726,25 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
                                 status_pill(ui, &status, status_color);
                             });
                             cell(ui, widths[6], |ui| {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                RichText::new("Remove").color(DANGER_TEXT).small(),
-                                            )
-                                            .small()
-                                            .fill(DANGER_FILL),
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                let toggle_label = if tunnel.enabled { "Off" } else { "On" };
+                                if ui.button(toggle_label).clicked() {
+                                    action = Some(RowAction::Toggle(index));
+                                }
+                                if ui.button("Edit").clicked() {
+                                    action = Some(RowAction::Edit(index));
+                                }
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new("Remove").color(DANGER_TEXT),
                                         )
-                                        .clicked()
-                                    {
-                                        action = Some(RowAction::Delete(index));
-                                    }
-                                    if ui.small_button("Edit").clicked() {
-                                        action = Some(RowAction::Edit(index));
-                                    }
-                                    let toggle_label = if tunnel.enabled { "Off" } else { "On" };
-                                    if ui.small_button(toggle_label).clicked() {
-                                        action = Some(RowAction::Toggle(index));
-                                    }
-                                });
+                                        .fill(DANGER_FILL),
+                                    )
+                                    .clicked()
+                                {
+                                    action = Some(RowAction::Delete(index));
+                                }
                             });
                         });
                     }
@@ -737,7 +776,12 @@ fn header_row(ui: &mut egui::Ui, widths: &[f32; 7]) {
                 if i == 6 {
                     return;
                 }
-                ui.label(RichText::new(title).strong().color(MUTED).small());
+                ui.label(
+                    RichText::new(title)
+                        .strong()
+                        .size(FONT_HEADER)
+                        .color(Color32::from_rgb(186, 192, 200)),
+                );
             });
         }
     });
@@ -767,10 +811,21 @@ fn cell(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 fn col_widths(available: f32) -> [f32; 7] {
-    let spacing = 8.0 * 6.0;
-    let fixed = 88.0 + 120.0 + 68.0 + 68.0 + 124.0 + 172.0 + spacing;
-    let url = (available - fixed).max(160.0);
-    [88.0, 120.0, 68.0, 68.0, url, 124.0, 172.0]
+    // Keep columns clustered. Extra window width stays to the right of Actions.
+    let mut widths = [92.0, 120.0, 76.0, 76.0, 214.0, 132.0, 196.0];
+    let spacing = 6.0 * 6.0;
+    let total: f32 = widths.iter().sum::<f32>() + spacing;
+    if total <= available {
+        return widths;
+    }
+    let overflow = total - available;
+    let url_shrink = overflow.min((widths[4] - 150.0).max(0.0));
+    widths[4] -= url_shrink;
+    let leftover = overflow - url_shrink;
+    if leftover > 0.0 {
+        widths[1] = (widths[1] - leftover).max(84.0);
+    }
+    widths
 }
 
 fn tunnel_matches(tunnel: &crate::ports::Tunnel, filter: &str) -> bool {
@@ -813,8 +868,8 @@ fn status_pill(ui: &mut egui::Ui, text: &str, color: Color32) {
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90),
         ))
         .corner_radius(10)
-        .inner_margin(Margin::symmetric(7, 2))
+        .inner_margin(Margin::symmetric(8, 3))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).color(color).small().strong());
+            ui.label(RichText::new(text).color(color).size(FONT_PILL).strong());
         });
 }
