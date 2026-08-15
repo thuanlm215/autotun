@@ -1,6 +1,6 @@
 [package]
 name = "autotun"
-version = "1.4.1"
+version = "1.4.2"
 edition = "2024"
 description = "TUI/GUI for SSH port forwards over one connection, plus clipboard image upload for remote CLIs"
 license = "MIT"
