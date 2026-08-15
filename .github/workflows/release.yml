@@ -59,9 +59,54 @@ jobs:
           path: dist/autotun-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
+  build-gui:
+    name: Build GUI ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          cargo_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          test "v${cargo_version}" = "$GITHUB_REF_NAME"
+
+      - name: Install GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwayland-dev libxkbcommon-dev libx11-dev \
+            libxcursor-dev libxi-dev libxrandr-dev libxss-dev libgl1-mesa-dev \
+            libegl1-mesa-dev pkg-config
+
+      - name: Build GUI
+        run: cargo build --locked --release --features gui --bin autotun-gui --target "${{ matrix.target }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          archive="autotun-gui-${{ matrix.target }}.tar.gz"
+          mkdir -p dist/package
+          install -m 0755 "target/${{ matrix.target }}/release/autotun-gui" dist/package/autotun-gui
+          install -m 0644 LICENSE README.md packaging/autotun.desktop dist/package/
+          tar -C dist/package -czf "dist/${archive}" autotun-gui LICENSE README.md autotun.desktop
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: autotun-gui-${{ matrix.target }}
+          path: dist/autotun-gui-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, build-gui]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -14,10 +14,20 @@ path = "src/lib.rs"
 name = "autotun"
 path = "src/main.rs"
 
+[[bin]]
+name = "autotun-gui"
+path = "src/bin/autotun_gui.rs"
+required-features = ["gui"]
+
+[features]
+default = []
+gui = ["dep:eframe"]
+
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 crossterm = "0.29"
+eframe = { version = "0.32", optional = true }
 ratatui = "0.30"
 shell-words = "1.1"
 

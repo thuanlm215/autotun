@@ -1,47 +1,81 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use anyhow::Result;
 use clap::Parser;
 
-use autotun::{app, ssh};
-
-#[derive(Debug, Parser)]
-#[command(version, about = "Discover and toggle SSH tunnels from a TUI")]
-struct Cli {
-    /// SSH destination, for example user@server or an SSH config alias
-    destination: String,
-
-    /// Local listening ports to expose on the remote host with -R
-    #[arg(short = 'R', long = "reverse", value_name = "LOCAL_PORT")]
-    reverse_ports: Vec<u16>,
-
-    /// Extra arguments passed when the master SSH connection is started
-    #[arg(long = "ssh-arg", allow_hyphen_values = true)]
-    ssh_args: Vec<String>,
-
-    /// Include listeners bound only to remote loopback (enabled by default)
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    include_loopback: bool,
-
-    /// Discover ports but do not forward them automatically
-    #[arg(long)]
-    no_auto_forward: bool,
-
-    /// Seconds between remote listener scans
-    #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u64).range(1..))]
-    interval: u64,
-}
+use autotun::{app, cli::Cli, engine::Engine};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let socket = std::env::temp_dir().join(format!("autotun-{}-{nonce}.sock", std::process::id()));
-    let mut session = ssh::SshSession::connect(cli.destination, socket, cli.ssh_args)?;
-    app::run(
-        &mut session,
+    if cli.gui {
+        return launch_gui(&cli);
+    }
+    let destination = cli
+        .destination
+        .clone()
+        .expect("destination is required without --gui");
+    let engine = Engine::connect(
+        destination,
+        cli.ssh_args,
         &cli.reverse_ports,
         cli.include_loopback,
         !cli.no_auto_forward,
         cli.interval,
-    )
+    )?;
+    app::run(engine)
+}
+
+fn launch_gui(cli: &Cli) -> Result<()> {
+    #[cfg(feature = "gui")]
+    {
+        autotun::gui::run(cli)
+    }
+    #[cfg(not(feature = "gui"))]
+    {
+        exec_gui_binary(cli)
+    }
+}
+
+#[cfg(not(feature = "gui"))]
+fn exec_gui_binary(cli: &Cli) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    use anyhow::{Context, bail};
+    let exe = std::env::current_exe().unwrap_or_else(|_| "autotun".into());
+    let sibling = exe.with_file_name("autotun-gui");
+    let program = if sibling.is_file() {
+        sibling
+    } else {
+        "autotun-gui".into()
+    };
+    let mut command = Command::new(&program);
+    if let Some(destination) = &cli.destination {
+        command.arg(destination);
+    }
+    for port in &cli.reverse_ports {
+        command.arg("-R").arg(port.to_string());
+    }
+    for arg in &cli.ssh_args {
+        command.arg("--ssh-arg").arg(arg);
+    }
+    command
+        .arg("--include-loopback")
+        .arg(if cli.include_loopback {
+            "true"
+        } else {
+            "false"
+        });
+    if cli.no_auto_forward {
+        command.arg("--no-auto-forward");
+    }
+    command.arg("--interval").arg(cli.interval.to_string());
+    command.stdin(Stdio::inherit());
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+    match command.status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => bail!("autotun-gui exited with {status}"),
+        Err(error) => Err(error).context(format!(
+            "GUI is not in this binary. Install autotun-gui next to {} (same install script) or rebuild with --features gui",
+            exe.display()
+        )),
+    }
 }

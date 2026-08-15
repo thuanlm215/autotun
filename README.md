@@ -4,10 +4,10 @@
 [![Release](https://img.shields.io/github/v/release/thuanlm215/autotun)](https://github.com/thuanlm215/autotun/releases/latest)
 [![License](https://img.shields.io/github/license/thuanlm215/autotun)](LICENSE)
 
-`autotun` is a terminal UI for discovering and managing SSH port forwards over
-a single OpenSSH connection. It watches TCP listeners on a remote host,
-forwards them to local loopback by default, and lets you add, edit, toggle, or
-reverse tunnels without reconnecting.
+`autotun` is a terminal UI (and optional desktop GUI) for discovering and
+managing SSH port forwards over a single OpenSSH connection. It watches TCP
+listeners on a remote host, forwards them to local loopback by default, and
+lets you add, edit, toggle, or reverse tunnels without reconnecting.
 
 Existing SSH configuration works as usual: aliases, keys, agents, `ProxyJump`,
 and custom options.
@@ -104,6 +104,16 @@ Reverse forwards at startup, or extra OpenSSH options:
 autotun development-server -R 3000 -R 8080
 autotun development-server --ssh-arg=-J --ssh-arg=bastion.example.com
 ```
+
+Desktop GUI (same installer; extra binary, no extra packages on a normal Linux desktop):
+
+```sh
+autotun --gui
+autotun --gui development-server
+```
+
+The installer also adds an application menu entry. `autotun host` still opens
+the TUI.
 
 Run `autotun --help` for the full CLI reference.
 
@@ -252,6 +262,7 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 tests/install.sh
+cargo check --locked --features gui --bins
 ```
 
 Optional live SSH tests (need network and credentials):
