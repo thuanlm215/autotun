@@ -384,7 +384,7 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
             } else {
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Esc => {}
+                    KeyCode::Esc => engine.clear_notice(),
                     KeyCode::Down | KeyCode::Char('j') => {
                         move_selection(&mut state, visible_indices.len(), 1)
                     }
@@ -435,6 +435,7 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
                         }
                     }
                     KeyCode::Char('?') => {
+                        engine.clear_notice();
                         show_help = !show_help;
                     }
                     _ => {}

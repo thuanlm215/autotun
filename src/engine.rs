@@ -42,6 +42,7 @@ pub struct Engine {
     scanning: Arc<AtomicBool>,
     scanner: Option<thread::JoinHandle<()>>,
     last_notice: Option<String>,
+    notice_until: Option<Instant>,
 }
 
 impl Engine {
@@ -141,6 +142,7 @@ impl Engine {
             scanning,
             scanner: Some(scanner),
             last_notice: None,
+            notice_until: None,
         })
     }
 
@@ -162,6 +164,12 @@ impl Engine {
 
     pub fn set_notice(&mut self, notice: impl Into<String>) {
         self.last_notice = Some(notice.into());
+        self.notice_until = Some(Instant::now() + Duration::from_secs(4));
+    }
+
+    pub fn clear_notice(&mut self) {
+        self.last_notice = None;
+        self.notice_until = None;
     }
 
     /// Upload the local clipboard PNG and copy the remote path for the AI CLI.
@@ -175,11 +183,11 @@ impl Engine {
         });
         match result {
             Ok(path) => {
-                self.last_notice = Some(format!("{path}  (copied — paste in the AI CLI)"));
+                self.set_notice(format!("{path}  (copied — paste in the AI CLI)"));
                 Ok(path)
             }
             Err(error) => {
-                self.last_notice = Some(format!("clip failed: {error:#}"));
+                self.set_notice(format!("clip failed: {error:#}"));
                 Err(error)
             }
         }
@@ -187,6 +195,12 @@ impl Engine {
 
     /// Apply any background scan / reconnect results. Call from the UI loop.
     pub fn poll(&mut self) {
+        if self
+            .notice_until
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.clear_notice();
+        }
         while let Ok(scan) = self.scan_rx.try_recv() {
             match scan {
                 ScanEvent::Ports(found) => {

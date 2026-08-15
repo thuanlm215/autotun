@@ -2,7 +2,7 @@
 name = "autotun"
 version = "1.3.0"
 edition = "2024"
-description = "TUI for discovering and toggling SSH port forwards over one connection"
+description = "TUI/GUI for SSH port forwards over one connection, plus clipboard image upload for remote CLIs"
 license = "MIT"
 repository = "https://github.com/thuanlm215/autotun"
 
