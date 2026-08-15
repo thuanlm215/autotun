@@ -32,7 +32,7 @@ and custom options.
 - Resolves local bind conflicts by trying the next five ports.
 - Inline multi-line add/edit forms; help bar toggle with `?`.
 - Forwards a local clipboard PNG to `/tmp/autotun-clip-*.png` on the remote
-  host (`p` / **Forward image** / `autotun clip`) for pasting into an AI CLI.
+  host (`p` / **Send screenshot** / `autotun clip`) for pasting into an AI CLI.
 - Static Linux binaries for x86-64 and ARM64. Optional desktop GUI.
 
 ## Installation
@@ -135,7 +135,7 @@ autotun clip development-server
 
 Then `Ctrl+Shift+V` in the SSH CLI. The file is `/tmp/autotun-clip-<time>.png`;
 `/tmp/autotun-clip.png` always points at the latest. In the TUI press `p`; in
-the GUI use **Forward image**. A footer notice shows the path or the error;
+the GUI use **Send screenshot**. A notice shows the path or the error;
 it clears after a few seconds, or immediately with `?` / `Esc`.
 
 KDE Plasma does not ship a CLI clipboard tool. Install one on the **local**

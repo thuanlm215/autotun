@@ -3,13 +3,31 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{
+    self, Align, Color32, CornerRadius, Layout, Margin, Rect, RichText, Stroke, Vec2,
+};
 
 use crate::{
     cli::Cli,
     engine::{self, Engine},
     ports::Direction,
 };
+
+const ACCENT: Color32 = Color32::from_rgb(56, 148, 156);
+const ON_COLOR: Color32 = Color32::from_rgb(86, 196, 130);
+const WARN_COLOR: Color32 = Color32::from_rgb(230, 176, 80);
+const ERR_COLOR: Color32 = Color32::from_rgb(232, 110, 110);
+const MUTED: Color32 = Color32::from_rgb(154, 160, 170);
+const CLIP_COLOR: Color32 = Color32::from_rgb(130, 196, 220);
+const CARD_FILL: Color32 = Color32::from_rgb(30, 32, 38);
+const CARD_STROKE: Color32 = Color32::from_rgb(52, 56, 64);
+const TABLE_FILL: Color32 = Color32::from_rgb(26, 28, 33);
+const ROW_HOVER: Color32 = Color32::from_rgba_premultiplied(10, 10, 10, 10);
+const ROW_STRIPE: Color32 = Color32::from_rgba_premultiplied(5, 5, 5, 5);
+const HEADER_FILL: Color32 = Color32::from_rgb(34, 36, 42);
+const DANGER_FILL: Color32 = Color32::from_rgb(62, 36, 38);
+const DANGER_TEXT: Color32 = Color32::from_rgb(236, 150, 150);
+const ROW_H: f32 = 30.0;
 
 pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -20,8 +38,15 @@ pub fn run(cli: &Cli) -> Result<()> {
         ..Default::default()
     };
     let app = GuiApp::from_cli(cli);
-    eframe::run_native("autotun", options, Box::new(|_cc| Ok(Box::new(app))))
-        .map_err(|error| anyhow::anyhow!("GUI failed: {error}"))
+    eframe::run_native(
+        "autotun",
+        options,
+        Box::new(|cc| {
+            apply_theme(&cc.egui_ctx);
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|error| anyhow::anyhow!("GUI failed: {error}"))
 }
 
 struct GuiApp {
@@ -40,7 +65,12 @@ struct SessionUi {
     filter: String,
     form: Option<FormUi>,
     form_error: Option<String>,
-    clip_status: Option<String>,
+    clip_notice: Option<ClipNotice>,
+}
+
+enum ClipNotice {
+    Success(String),
+    Error(String),
 }
 
 struct FormUi {
@@ -114,7 +144,7 @@ impl GuiApp {
                     filter: String::new(),
                     form: None,
                     form_error: None,
-                    clip_status: None,
+                    clip_notice: None,
                 });
             }
             Err(error) => self.connect_error = Some(format!("{error:#}")),
@@ -125,81 +155,106 @@ impl GuiApp {
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(250));
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if self.session.is_some() {
-                self.session_ui(ui);
-            } else {
-                self.connect_ui(ui);
-            }
-        });
+        if let Some(session) = &self.session {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                "autotun — {}",
+                session.engine.destination()
+            )));
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title("autotun".into()));
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(16))
+            .show(ctx, |ui| {
+                if self.session.is_some() {
+                    self.session_ui(ui);
+                } else {
+                    self.connect_ui(ui);
+                }
+            });
     }
 }
 
 impl GuiApp {
     fn connect_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.heading("autotun");
-            ui.label("Connect over SSH and manage port forwards.");
+            ui.add_space(28.0);
+            ui.heading(RichText::new("autotun").size(26.0));
+            ui.label(
+                RichText::new("Connect over SSH and manage port forwards.")
+                    .color(MUTED)
+                    .size(14.0),
+            );
         });
-        ui.add_space(16.0);
+        ui.add_space(20.0);
 
-        egui::Grid::new("connect")
-            .num_columns(2)
-            .spacing([12.0, 8.0])
-            .show(ui, |ui| {
-                ui.label("Destination");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.destination)
-                        .desired_width(360.0)
-                        .hint_text("user@host or SSH alias"),
+        let card_width = 500.0_f32.min(ui.available_width());
+        ui.horizontal(|ui| {
+            let pad = ((ui.available_width() - card_width) * 0.5).max(0.0);
+            ui.add_space(pad);
+            card().show(ui, |ui| {
+                ui.set_width(card_width - 36.0);
+                egui::Grid::new("connect")
+                    .num_columns(2)
+                    .spacing([12.0, 10.0])
+                    .show(ui, |ui| {
+                        ui.label("Destination");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.destination)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("user@host or SSH alias"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Reverse ports");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.reverse_text)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("optional, e.g. 3000, 8080"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Extra SSH args");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.ssh_args_text)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("optional, e.g. -J bastion"),
+                        );
+                        ui.end_row();
+
+                        ui.label("Scan interval");
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.interval_text)
+                                    .desired_width(64.0),
+                            );
+                            ui.label(RichText::new("seconds").color(MUTED));
+                        });
+                        ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.checkbox(
+                    &mut self.auto_forward,
+                    "Auto-forward discovered remote ports",
                 );
-                ui.end_row();
-
-                ui.label("Reverse ports");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.reverse_text)
-                        .desired_width(360.0)
-                        .hint_text("optional, e.g. 3000, 8080"),
+                ui.checkbox(
+                    &mut self.include_loopback,
+                    "Include remote loopback listeners",
                 );
-                ui.end_row();
-
-                ui.label("Extra SSH args");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.ssh_args_text)
-                        .desired_width(360.0)
-                        .hint_text("optional, e.g. -J bastion"),
-                );
-                ui.end_row();
-
-                ui.label("Scan interval");
-                ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.interval_text).desired_width(60.0));
-                    ui.label("seconds");
-                });
-                ui.end_row();
+                ui.add_space(14.0);
+                if ui
+                    .add_sized([ui.available_width(), 32.0], primary_button("Connect"))
+                    .clicked()
+                {
+                    self.try_connect();
+                }
+                if let Some(error) = &self.connect_error {
+                    ui.add_space(8.0);
+                    ui.colored_label(ERR_COLOR, error);
+                }
             });
-
-        ui.add_space(8.0);
-        ui.checkbox(
-            &mut self.auto_forward,
-            "Auto-forward discovered remote ports",
-        );
-        ui.checkbox(
-            &mut self.include_loopback,
-            "Include remote loopback listeners",
-        );
-        ui.add_space(12.0);
-        if ui
-            .add_sized([160.0, 28.0], egui::Button::new("Connect"))
-            .clicked()
-        {
-            self.try_connect();
-        }
-        if let Some(error) = &self.connect_error {
-            ui.add_space(8.0);
-            ui.colored_label(Color32::from_rgb(220, 80, 80), error);
-        }
+        });
     }
 
     fn session_ui(&mut self, ui: &mut egui::Ui) {
@@ -209,42 +264,7 @@ impl GuiApp {
                 return;
             };
             session.engine.poll();
-            ui.horizontal(|ui| {
-                ui.heading("autotun");
-                ui.label(RichText::new(session.engine.destination()).strong());
-                if session.engine.connected() {
-                    ui.colored_label(Color32::from_rgb(80, 200, 120), "● connected");
-                } else {
-                    ui.colored_label(Color32::from_rgb(230, 180, 60), "○ reconnecting");
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Disconnect").clicked() {
-                        disconnect = true;
-                    }
-                    if ui.button("Rescan").clicked() {
-                        session.engine.rescan();
-                    }
-                    if ui.button("Forward image").clicked() {
-                        match session.engine.push_clipboard_image() {
-                            Ok(path) => {
-                                session.clip_status =
-                                    Some(format!("{path}  (copied — paste in the AI CLI)"));
-                            }
-                            Err(error) => {
-                                session.clip_status = Some(format!("{error:#}"));
-                            }
-                        }
-                    }
-                    if ui.button("Reverse").clicked() {
-                        session.form = Some(FormUi::new(Direction::Reverse));
-                        session.form_error = None;
-                    }
-                    if ui.button("Forward").clicked() {
-                        session.form = Some(FormUi::new(Direction::Local));
-                        session.form_error = None;
-                    }
-                });
-            });
+            header_bar(ui, session, &mut disconnect);
             if disconnect {
                 session.engine.shutdown();
             }
@@ -257,25 +277,17 @@ impl GuiApp {
             return;
         };
 
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label("Filter");
-            ui.add(
-                egui::TextEdit::singleline(&mut session.filter)
-                    .desired_width(240.0)
-                    .hint_text("label or port"),
-            );
-        });
-        if let Some(status) = &session.clip_status {
-            ui.colored_label(Color32::from_rgb(80, 180, 220), status);
-        }
-        ui.add_space(6.0);
+        ui.add_space(10.0);
+        filter_bar(ui, session);
+        clip_banner(ui, session);
+        ui.add_space(8.0);
 
         let mut save_form = false;
         let mut cancel_form = false;
         if let Some(form) = session.form.as_mut() {
-            ui.group(|ui| {
+            card().show(ui, |ui| {
                 ui.label(RichText::new(&form.title).strong());
+                ui.add_space(6.0);
                 let (source_label, requested_label) = match form.direction {
                     Direction::Local => ("Remote port", "Local port (optional)"),
                     Direction::Reverse => ("Local port", "Remote port (optional)"),
@@ -283,22 +295,26 @@ impl GuiApp {
                 ui.horizontal(|ui| {
                     ui.label(source_label);
                     ui.add(egui::TextEdit::singleline(&mut form.source).desired_width(80.0));
+                    ui.add_space(8.0);
                     ui.label(requested_label);
                     ui.add(
                         egui::TextEdit::singleline(&mut form.requested)
                             .desired_width(80.0)
                             .hint_text("same"),
                     );
+                    ui.add_space(8.0);
                     ui.label("Label");
                     ui.add(egui::TextEdit::singleline(&mut form.label).desired_width(140.0));
-                    save_form = ui.button("Save").clicked();
+                    ui.add_space(8.0);
+                    save_form = ui.add(primary_button("Save")).clicked();
                     cancel_form = ui.button("Cancel").clicked();
                 });
             });
             if let Some(error) = &session.form_error {
-                ui.colored_label(Color32::from_rgb(220, 80, 80), error);
+                ui.add_space(6.0);
+                ui.colored_label(ERR_COLOR, error);
             }
-            ui.add_space(6.0);
+            ui.add_space(8.0);
         }
         if cancel_form {
             session.form = None;
@@ -331,120 +347,88 @@ impl GuiApp {
             .tunnels()
             .iter()
             .enumerate()
-            .filter(|(_, tunnel)| {
-                if filter.is_empty() {
-                    return true;
-                }
-                tunnel.label.to_lowercase().contains(&filter)
-                    || tunnel.source_port.to_string().contains(&filter)
-                    || tunnel
-                        .bind_port
-                        .map(|port| port.to_string().contains(&filter))
-                        .unwrap_or(false)
-            })
+            .filter(|(_, tunnel)| tunnel_matches(tunnel, &filter))
             .map(|(index, _)| index)
             .collect();
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("tunnels")
-                .striped(true)
-                .num_columns(7)
-                .min_col_width(16.0)
-                .spacing([12.0, 6.0])
-                .show(ui, |ui| {
-                    ui.strong("Direction");
-                    ui.strong("Label");
-                    ui.strong("Remote");
-                    ui.strong("Local");
-                    ui.strong("URL");
-                    ui.strong("Status");
-                    ui.strong("");
-                    ui.end_row();
-
-                    let mut action = None::<RowAction>;
-                    for index in visible {
-                        let tunnel = &session.engine.tunnels()[index];
-                        let direction = if tunnel.direction == Direction::Local {
-                            "Forward"
-                        } else {
-                            "Reverse"
-                        };
-                        let (remote, local) = match tunnel.direction {
-                            Direction::Local => (
-                                tunnel.source_port.to_string(),
-                                tunnel
-                                    .bind_port
-                                    .map(|port| port.to_string())
-                                    .unwrap_or_else(|| "auto".into()),
-                            ),
-                            Direction::Reverse => (
-                                tunnel
-                                    .bind_port
-                                    .map(|port| port.to_string())
-                                    .unwrap_or_else(|| tunnel.requested_port.to_string()),
-                                tunnel.source_port.to_string(),
-                            ),
-                        };
-                        let status = tunnel.error.clone().unwrap_or_else(|| {
-                            if tunnel.enabled {
-                                "ON".into()
-                            } else if tunnel.manual_off {
-                                "MANUAL OFF".into()
-                            } else if !tunnel.present {
-                                "TARGET DOWN".into()
-                            } else {
-                                "off".into()
-                            }
-                        });
-                        let url = engine::tunnel_url(tunnel);
-                        ui.label(direction);
-                        ui.label(if tunnel.label.is_empty() {
-                            "—"
-                        } else {
-                            &tunnel.label
-                        });
-                        ui.label(remote);
-                        ui.label(local);
-                        if url == "—" {
-                            ui.label("—");
-                        } else if ui.link(&url).clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
-                        }
-                        let status_color = if tunnel.enabled {
-                            Color32::from_rgb(80, 200, 120)
-                        } else if tunnel.error.is_some() {
-                            Color32::from_rgb(220, 80, 80)
-                        } else {
-                            ui.visuals().text_color()
-                        };
-                        ui.colored_label(status_color, status);
-                        ui.horizontal(|ui| {
-                            let toggle_label = if tunnel.enabled { "Off" } else { "On" };
-                            if ui.small_button(toggle_label).clicked() {
-                                action = Some(RowAction::Toggle(index));
-                            }
-                            if ui.small_button("Edit").clicked() {
-                                action = Some(RowAction::Edit(index));
-                            }
-                            if ui.small_button("Remove").clicked() {
-                                action = Some(RowAction::Delete(index));
-                            }
-                        });
-                        ui.end_row();
-                    }
-                    match action {
-                        Some(RowAction::Toggle(index)) => session.engine.toggle(index),
-                        Some(RowAction::Delete(index)) => session.engine.delete(index),
-                        Some(RowAction::Edit(index)) => {
-                            let tunnel = &session.engine.tunnels()[index];
-                            session.form = Some(FormUi::edit(tunnel, index));
-                            session.form_error = None;
-                        }
-                        None => {}
-                    }
-                });
-        });
+        tunnel_table(ui, session, &visible);
     }
+}
+
+fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool) {
+    ui.horizontal(|ui| {
+        ui.heading("autotun");
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(session.engine.destination())
+                .strong()
+                .size(16.0),
+        );
+        if session.engine.connected() {
+            status_dot(ui, ON_COLOR, "connected");
+        } else {
+            status_dot(ui, WARN_COLOR, "reconnecting");
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("Disconnect").color(DANGER_TEXT))
+                        .fill(DANGER_FILL),
+                )
+                .clicked()
+            {
+                *disconnect = true;
+            }
+            ui.add_space(10.0);
+            if ui.button("Rescan").clicked() {
+                session.engine.rescan();
+            }
+            if ui
+                .button("Send screenshot")
+                .on_hover_text("Upload the clipboard PNG to the remote host")
+                .clicked()
+            {
+                match session.engine.push_clipboard_image() {
+                    Ok(path) => session.clip_notice = Some(ClipNotice::Success(path)),
+                    Err(error) => {
+                        session.clip_notice = Some(ClipNotice::Error(format!("{error:#}")))
+                    }
+                }
+            }
+            ui.add_space(10.0);
+            if ui.add(primary_button("Reverse")).clicked() {
+                session.form = Some(FormUi::new(Direction::Reverse));
+                session.form_error = None;
+            }
+            if ui.add(primary_button("Forward")).clicked() {
+                session.form = Some(FormUi::new(Direction::Local));
+                session.form_error = None;
+            }
+        });
+    });
+}
+
+fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi) {
+    let filter = session.filter.to_lowercase();
+    let total = session.engine.tunnels().len();
+    let shown = session
+        .engine
+        .tunnels()
+        .iter()
+        .filter(|tunnel| tunnel_matches(tunnel, &filter))
+        .count();
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Filter").color(MUTED));
+        ui.add(
+            egui::TextEdit::singleline(&mut session.filter)
+                .desired_width(260.0)
+                .hint_text("label or port"),
+        );
+        ui.label(
+            RichText::new(format!("{shown} / {total}"))
+                .color(MUTED)
+                .small(),
+        );
+    });
 }
 
 enum RowAction {
@@ -507,4 +491,330 @@ fn parse_ssh_args(text: &str) -> Vec<String> {
         Ok(args) => args,
         Err(_) => text.split_whitespace().map(str::to_owned).collect(),
     }
+}
+
+fn apply_theme(ctx: &egui::Context) {
+    let mut style = (*ctx.style()).clone();
+    style.spacing.item_spacing = Vec2::new(8.0, 6.0);
+    style.spacing.button_padding = Vec2::new(10.0, 5.0);
+
+    let mut visuals = egui::Visuals::dark();
+    visuals.override_text_color = Some(Color32::from_rgb(214, 218, 224));
+    visuals.hyperlink_color = Color32::from_rgb(122, 186, 232);
+    visuals.warn_fg_color = WARN_COLOR;
+    visuals.error_fg_color = ERR_COLOR;
+    visuals.panel_fill = Color32::from_rgb(22, 24, 28);
+    visuals.window_fill = CARD_FILL;
+    visuals.extreme_bg_color = Color32::from_rgb(16, 17, 21);
+    visuals.faint_bg_color = ROW_STRIPE;
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(5);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(5);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(5);
+    visuals.widgets.active.corner_radius = CornerRadius::same(5);
+    visuals.widgets.open.corner_radius = CornerRadius::same(5);
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(48, 52, 60);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(64, 70, 80);
+    visuals.widgets.active.bg_fill = Color32::from_rgb(56, 62, 72);
+    visuals.selection.bg_fill = Color32::from_rgb(38, 110, 122);
+    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(110, 196, 204));
+    style.visuals = visuals;
+    ctx.set_style(style);
+}
+
+fn card() -> egui::Frame {
+    egui::Frame::new()
+        .fill(CARD_FILL)
+        .stroke(Stroke::new(1.0_f32, CARD_STROKE))
+        .corner_radius(8)
+        .inner_margin(Margin::same(16))
+}
+
+fn primary_button(label: &str) -> egui::Button<'static> {
+    egui::Button::new(RichText::new(label.to_owned()).color(Color32::from_rgb(240, 248, 248)))
+        .fill(ACCENT)
+}
+
+fn status_dot(ui: &mut egui::Ui, color: Color32, text: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
+        ui.painter().circle_filled(rect.center(), 3.5, color);
+        ui.label(RichText::new(text).color(color));
+    });
+}
+
+fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi) {
+    let Some(notice) = &session.clip_notice else {
+        return;
+    };
+    ui.add_space(8.0);
+    let (fill, stroke) = match notice {
+        ClipNotice::Success(_) => (
+            Color32::from_rgb(28, 42, 48),
+            Color32::from_rgb(48, 90, 104),
+        ),
+        ClipNotice::Error(_) => (
+            Color32::from_rgb(48, 30, 32),
+            Color32::from_rgb(110, 56, 58),
+        ),
+    };
+    let mut dismiss = false;
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0_f32, stroke))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                match notice {
+                    ClipNotice::Success(path) => {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("{path}  (copied — paste in the AI CLI)"))
+                                    .color(CLIP_COLOR)
+                                    .monospace(),
+                            )
+                            .selectable(true),
+                        );
+                        if ui.small_button("Copy").clicked() {
+                            ui.ctx().copy_text(path.clone());
+                        }
+                    }
+                    ClipNotice::Error(error) => {
+                        ui.add(
+                            egui::Label::new(RichText::new(error).color(ERR_COLOR))
+                                .selectable(true),
+                        );
+                    }
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+                        dismiss = true;
+                    }
+                });
+            });
+        });
+    if dismiss {
+        session.clip_notice = None;
+    }
+}
+
+fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
+    let remaining = ui.available_height();
+    egui::Frame::new()
+        .fill(TABLE_FILL)
+        .stroke(Stroke::new(1.0_f32, CARD_STROKE))
+        .corner_radius(8)
+        .inner_margin(Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_min_height((remaining - 4.0).max(140.0));
+            let widths = col_widths(ui.available_width());
+            header_row(ui, &widths);
+            ui.add_space(2.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if visible.is_empty() {
+                        ui.add_space(24.0);
+                        ui.vertical_centered(|ui| {
+                            let empty = if session.filter.is_empty() {
+                                "No tunnels yet"
+                            } else {
+                                "No tunnels match this filter"
+                            };
+                            ui.label(RichText::new(empty).color(MUTED));
+                        });
+                        return;
+                    }
+                    let mut action = None::<RowAction>;
+                    for (row_i, &index) in visible.iter().enumerate() {
+                        let tunnel = &session.engine.tunnels()[index];
+                        paint_row_bg(ui, row_i);
+                        ui.horizontal(|ui| {
+                            ui.set_height(ROW_H);
+                            let direction = if tunnel.direction == Direction::Local {
+                                "Forward"
+                            } else {
+                                "Reverse"
+                            };
+                            let (remote, local) = match tunnel.direction {
+                                Direction::Local => (
+                                    tunnel.source_port.to_string(),
+                                    tunnel
+                                        .bind_port
+                                        .map(|port| port.to_string())
+                                        .unwrap_or_else(|| "auto".into()),
+                                ),
+                                Direction::Reverse => (
+                                    tunnel
+                                        .bind_port
+                                        .map(|port| port.to_string())
+                                        .unwrap_or_else(|| tunnel.requested_port.to_string()),
+                                    tunnel.source_port.to_string(),
+                                ),
+                            };
+                            let (status, status_color) = tunnel_status(tunnel);
+                            let url = engine::tunnel_url(tunnel);
+                            let label = if tunnel.label.is_empty() {
+                                "—"
+                            } else {
+                                tunnel.label.as_str()
+                            };
+
+                            cell(ui, widths[0], |ui| {
+                                ui.label(direction);
+                            });
+                            cell(ui, widths[1], |ui| {
+                                ui.label(label);
+                            });
+                            cell(ui, widths[2], |ui| {
+                                ui.monospace(remote);
+                            });
+                            cell(ui, widths[3], |ui| {
+                                ui.monospace(local);
+                            });
+                            cell(ui, widths[4], |ui| {
+                                if url == "—" {
+                                    ui.label(RichText::new("—").color(MUTED));
+                                } else if ui.link(&url).clicked() {
+                                    let _ =
+                                        std::process::Command::new("xdg-open").arg(&url).spawn();
+                                }
+                            });
+                            cell(ui, widths[5], |ui| {
+                                status_pill(ui, &status, status_color);
+                            });
+                            cell(ui, widths[6], |ui| {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new("Remove").color(DANGER_TEXT).small(),
+                                            )
+                                            .small()
+                                            .fill(DANGER_FILL),
+                                        )
+                                        .clicked()
+                                    {
+                                        action = Some(RowAction::Delete(index));
+                                    }
+                                    if ui.small_button("Edit").clicked() {
+                                        action = Some(RowAction::Edit(index));
+                                    }
+                                    let toggle_label = if tunnel.enabled { "Off" } else { "On" };
+                                    if ui.small_button(toggle_label).clicked() {
+                                        action = Some(RowAction::Toggle(index));
+                                    }
+                                });
+                            });
+                        });
+                    }
+                    match action {
+                        Some(RowAction::Toggle(index)) => session.engine.toggle(index),
+                        Some(RowAction::Delete(index)) => session.engine.delete(index),
+                        Some(RowAction::Edit(index)) => {
+                            let tunnel = &session.engine.tunnels()[index];
+                            session.form = Some(FormUi::edit(tunnel, index));
+                            session.form_error = None;
+                        }
+                        None => {}
+                    }
+                });
+        });
+}
+
+fn header_row(ui: &mut egui::Ui, widths: &[f32; 7]) {
+    let rect = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), ROW_H));
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(5), HEADER_FILL);
+    ui.horizontal(|ui| {
+        ui.set_height(ROW_H);
+        for (i, title) in ["Direction", "Label", "Remote", "Local", "URL", "Status", ""]
+            .into_iter()
+            .enumerate()
+        {
+            cell(ui, widths[i], |ui| {
+                if i == 6 {
+                    return;
+                }
+                ui.label(RichText::new(title).strong().color(MUTED).small());
+            });
+        }
+    });
+}
+
+fn paint_row_bg(ui: &mut egui::Ui, row_i: usize) {
+    let rect = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), ROW_H));
+    if ui.rect_contains_pointer(rect) {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(5), ROW_HOVER);
+    } else if row_i % 2 == 1 {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(5), ROW_STRIPE);
+    }
+}
+
+fn cell(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, ui.available_height()),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.set_min_width(width);
+            ui.set_max_width(width);
+            add(ui);
+        },
+    );
+}
+
+fn col_widths(available: f32) -> [f32; 7] {
+    let spacing = 8.0 * 6.0;
+    let fixed = 88.0 + 120.0 + 68.0 + 68.0 + 124.0 + 172.0 + spacing;
+    let url = (available - fixed).max(160.0);
+    [88.0, 120.0, 68.0, 68.0, url, 124.0, 172.0]
+}
+
+fn tunnel_matches(tunnel: &crate::ports::Tunnel, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    tunnel.label.to_lowercase().contains(filter)
+        || tunnel.source_port.to_string().contains(filter)
+        || tunnel
+            .bind_port
+            .map(|port| port.to_string().contains(filter))
+            .unwrap_or(false)
+}
+
+fn tunnel_status(tunnel: &crate::ports::Tunnel) -> (String, Color32) {
+    if let Some(error) = &tunnel.error {
+        return (error.clone(), ERR_COLOR);
+    }
+    if tunnel.enabled {
+        ("ON".into(), ON_COLOR)
+    } else if tunnel.manual_off {
+        ("MANUAL OFF".into(), MUTED)
+    } else if !tunnel.present {
+        ("TARGET DOWN".into(), WARN_COLOR)
+    } else {
+        ("off".into(), MUTED)
+    }
+}
+
+fn status_pill(ui: &mut egui::Ui, text: &str, color: Color32) {
+    egui::Frame::new()
+        .fill(Color32::from_rgba_unmultiplied(
+            color.r(),
+            color.g(),
+            color.b(),
+            28,
+        ))
+        .stroke(Stroke::new(
+            1.0_f32,
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90),
+        ))
+        .corner_radius(10)
+        .inner_margin(Margin::symmetric(7, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).color(color).small().strong());
+        });
 }
