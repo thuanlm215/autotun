@@ -22,6 +22,10 @@ impl SshSession {
         &self.destination
     }
 
+    pub fn socket(&self) -> &PathBuf {
+        &self.socket
+    }
+
     pub fn connect(destination: String, socket: PathBuf, extra_args: Vec<String>) -> Result<Self> {
         Self::start_master(&destination, &socket, &extra_args, false)?;
         Ok(Self {

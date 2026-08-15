@@ -4,6 +4,7 @@
 
 pub mod app;
 pub mod cli;
+pub mod clip;
 pub mod engine;
 #[cfg(feature = "gui")]
 pub mod gui;

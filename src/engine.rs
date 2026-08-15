@@ -41,6 +41,7 @@ pub struct Engine {
     scan_rx: mpsc::Receiver<ScanEvent>,
     scanning: Arc<AtomicBool>,
     scanner: Option<thread::JoinHandle<()>>,
+    last_notice: Option<String>,
 }
 
 impl Engine {
@@ -53,9 +54,14 @@ impl Engine {
         interval_seconds: u64,
     ) -> Result<Self> {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-        let socket =
-            std::env::temp_dir().join(format!("autotun-{}-{nonce}.sock", std::process::id()));
+        let runtime = crate::clip::runtime_dir();
+        let _ = std::fs::create_dir_all(&runtime);
+        let socket = runtime.join(format!(
+            "{}-{nonce}.sock",
+            crate::clip::sanitize_destination(&destination)
+        ));
         let session = SshSession::connect(destination, socket, extra_args)?;
+        let _ = crate::clip::write_last_session(session.destination(), session.socket());
         Self::start(
             session,
             reverse_ports,
@@ -134,6 +140,7 @@ impl Engine {
             scan_rx,
             scanning,
             scanner: Some(scanner),
+            last_notice: None,
         })
     }
 
@@ -147,6 +154,35 @@ impl Engine {
 
     pub fn tunnels(&self) -> &[Tunnel] {
         &self.tunnels
+    }
+
+    pub fn notice(&self) -> Option<&str> {
+        self.last_notice.as_deref()
+    }
+
+    pub fn set_notice(&mut self, notice: impl Into<String>) {
+        self.last_notice = Some(notice.into());
+    }
+
+    /// Upload the local clipboard PNG and copy the remote path for the AI CLI.
+    pub fn push_clipboard_image(&mut self) -> Result<String> {
+        let result = crate::clip::read_clipboard_png().and_then(|png| {
+            crate::clip::upload_png_on_session(
+                self.session.destination(),
+                self.session.socket(),
+                &png,
+            )
+        });
+        match result {
+            Ok(path) => {
+                self.last_notice = Some(format!("{path}  (copied — paste in the AI CLI)"));
+                Ok(path)
+            }
+            Err(error) => {
+                self.last_notice = Some(format!("clip failed: {error:#}"));
+                Err(error)
+            }
+        }
     }
 
     /// Apply any background scan / reconnect results. Call from the UI loop.

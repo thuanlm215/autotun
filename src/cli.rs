@@ -1,13 +1,17 @@
 //! Shared CLI flags for the TUI binary and the optional GUI.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Discover and toggle SSH tunnels from a TUI")]
+#[command(subcommand_negates_reqs = true)]
 pub struct Cli {
     /// SSH destination, for example user@server or an SSH config alias
     #[arg(required_unless_present = "gui")]
     pub destination: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
 
     /// Local listening ports to expose on the remote host with -R
     #[arg(short = 'R', long = "reverse", value_name = "LOCAL_PORT")]
@@ -32,4 +36,13 @@ pub struct Cli {
     /// Open the desktop GUI instead of the TUI
     #[arg(long)]
     pub gui: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Upload the local clipboard image to the remote host and copy the path
+    Clip {
+        /// SSH destination (defaults to the last autotun session)
+        destination: Option<String>,
+    },
 }

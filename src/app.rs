@@ -1,7 +1,4 @@
-use std::{
-    io::{self, Write},
-    time::Duration,
-};
+use std::{io, time::Duration};
 
 use anyhow::Result;
 use crossterm::{
@@ -316,9 +313,11 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
                 format!("{gutter_pad}{}", InlineForm::help_line())
             } else if filter.is_some() {
                 format!("{gutter_pad}Type to filter  Esc Clear  Enter Confirm")
+            } else if let Some(notice) = engine.notice() {
+                format!("{gutter_pad}{notice}")
             } else if show_help {
                 format!(
-                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  c Copy URL  / Filter  ? Help  q Quit"
+                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  p Fwd image  c Copy URL  / Filter  ? Help  q Quit"
                 )
             } else {
                 format!("{gutter_pad}? Help")
@@ -419,6 +418,9 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
                         }
                     }
                     KeyCode::Char('r') => engine.rescan(),
+                    KeyCode::Char('p') => {
+                        let _ = engine.push_clipboard_image();
+                    }
                     KeyCode::Char('/') => {
                         filter = Some(String::new());
                     }
@@ -428,7 +430,7 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
                         {
                             let url = engine::tunnel_url(&engine.tunnels()[i]);
                             if url != "—" {
-                                copy_to_clipboard(&url);
+                                crate::clip::copy_text_to_clipboard(&url);
                             }
                         }
                     }
@@ -467,40 +469,6 @@ fn move_selection(state: &mut TableState, len: usize, delta: isize) {
     }
     let current = state.selected().unwrap_or(0) as isize;
     state.select(Some((current + delta).rem_euclid(len as isize) as usize));
-}
-
-/// Copy text to the system clipboard using the OSC 52 escape sequence.
-/// Supported by most modern terminals (kitty, alacritty, wezterm, foot, tmux).
-fn copy_to_clipboard(text: &str) {
-    let encoded = base64_encode(text.as_bytes());
-    // OSC 52: \x1b]52;c;<base64>\x07
-    let _ = write!(io::stdout(), "\x1b]52;c;{encoded}\x07");
-    let _ = io::stdout().flush();
-}
-
-/// Minimal base64 encoder (no external dependency needed).
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
 }
 
 #[cfg(test)]

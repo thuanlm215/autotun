@@ -1,10 +1,20 @@
 use anyhow::Result;
 use clap::Parser;
 
-use autotun::{app, cli::Cli, engine::Engine};
+use autotun::{
+    app,
+    cli::{Cli, Command},
+    clip,
+    engine::Engine,
+};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Clip { destination }) = cli.command {
+        let path = clip::send_clipboard_image(destination)?;
+        println!("{path}");
+        return Ok(());
+    }
     if cli.gui {
         return launch_gui(&cli);
     }

@@ -115,6 +115,27 @@ autotun --gui development-server
 The installer also adds an application menu entry. `autotun host` still opens
 the TUI.
 
+### Clipboard image → remote AI CLI
+
+Konsole cannot paste a screenshot into an SSH PTY. Autotun uploads the PNG
+instead and puts the remote path on your clipboard so you paste **text** into
+the CLI (Claude Code, Aider, …).
+
+```sh
+# While autotun is connected, from another local terminal or a KDE shortcut:
+autotun clip
+
+# Or name the host (uses the live ControlMaster when it matches):
+autotun clip development-server
+```
+
+Then `Ctrl+Shift+V` in the SSH CLI. The file is `/tmp/autotun-clip-<time>.png`;
+`/tmp/autotun-clip.png` always points at the latest. In the TUI press `p`; in
+the GUI use **Send image**.
+
+Needs `wl-clipboard` (Wayland) or `xclip` (X11) on the local machine. Bind
+`autotun clip` to a global shortcut so you never leave the CLI window.
+
 Run `autotun --help` for the full CLI reference.
 
 ## Controls
@@ -130,6 +151,9 @@ Help is shown by default. Press `?` to hide or show it.
 | `v` | Add a **reverse** (local → remote, `-R`) |
 | `d` | Remove a manual tunnel, or ignore a discovered one for this session |
 | `r` | Rescan remote listeners now |
+| `p` | Send the local clipboard image to the remote host and copy the path |
+| `c` | Copy the selected tunnel URL |
+| `/` | Filter |
 | `?` | Toggle the help bar |
 | `q`, `Ctrl+C` | Close tunnels and exit |
 

@@ -40,6 +40,7 @@ struct SessionUi {
     filter: String,
     form: Option<FormUi>,
     form_error: Option<String>,
+    clip_status: Option<String>,
 }
 
 struct FormUi {
@@ -113,6 +114,7 @@ impl GuiApp {
                     filter: String::new(),
                     form: None,
                     form_error: None,
+                    clip_status: None,
                 });
             }
             Err(error) => self.connect_error = Some(format!("{error:#}")),
@@ -222,6 +224,17 @@ impl GuiApp {
                     if ui.button("Rescan").clicked() {
                         session.engine.rescan();
                     }
+                    if ui.button("Forward image").clicked() {
+                        match session.engine.push_clipboard_image() {
+                            Ok(path) => {
+                                session.clip_status =
+                                    Some(format!("{path}  (copied — paste in the AI CLI)"));
+                            }
+                            Err(error) => {
+                                session.clip_status = Some(format!("{error:#}"));
+                            }
+                        }
+                    }
                     if ui.button("Reverse").clicked() {
                         session.form = Some(FormUi::new(Direction::Reverse));
                         session.form_error = None;
@@ -253,6 +266,9 @@ impl GuiApp {
                     .hint_text("label or port"),
             );
         });
+        if let Some(status) = &session.clip_status {
+            ui.colored_label(Color32::from_rgb(80, 180, 220), status);
+        }
         ui.add_space(6.0);
 
         let mut save_form = false;
