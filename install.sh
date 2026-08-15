@@ -81,6 +81,7 @@ Icon=autotun
 Terminal=false
 Categories=Network;Utility;
 StartupNotify=true
+StartupWMClass=autotun
 EOF
             fi
             # Point the launcher at this install even if PATH is incomplete.

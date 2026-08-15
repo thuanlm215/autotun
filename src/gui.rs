@@ -41,6 +41,7 @@ pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("autotun")
+            .with_app_id("autotun")
             .with_inner_size([960.0, 560.0])
             .with_min_inner_size([840.0, 420.0])
             .with_icon(

@@ -7,3 +7,4 @@ Icon=autotun
 Terminal=false
 Categories=Network;Utility;
 StartupNotify=true
+StartupWMClass=autotun
