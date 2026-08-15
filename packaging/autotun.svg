@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 128 128" role="img" aria-label="autotun">
+  <rect width="128" height="128" rx="28" fill="#1A1C20"/>
+  <!-- Nested tunnel arches: local → remote, teal matching the GUI accent. -->
+  <path d="M22 102 V76 A42 42 0 0 1 106 76 V102" fill="none" stroke="#2EC4C8" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M36 102 V78 A28 28 0 0 1 92 78 V102" fill="none" stroke="#1A969C" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M48 102 V80 A16 16 0 0 1 80 80 V102" fill="none" stroke="#12747A" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Live-connection status, same green as ON in the UI. -->
+  <circle cx="64" cy="78" r="6" fill="#56C482"/>
+</svg>

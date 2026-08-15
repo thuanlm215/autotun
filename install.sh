@@ -77,7 +77,7 @@ Type=Application
 Name=autotun
 Comment=Discover and toggle SSH port forwards
 Exec=$INSTALL_DIR/autotun --gui
-Icon=network-workgroup
+Icon=autotun
 Terminal=false
 Categories=Network;Utility;
 StartupNotify=true
@@ -86,6 +86,17 @@ EOF
             # Point the launcher at this install even if PATH is incomplete.
             sed "s|^Exec=.*|Exec=$INSTALL_DIR/autotun --gui|" "$tmp_dir/autotun.desktop" \
                 >"$applications_dir/autotun.desktop"
+            icons_home="${XDG_DATA_HOME:-$HOME/.local/share}/icons"
+            if [ -f "$tmp_dir/autotun.svg" ]; then
+                mkdir -p "$icons_home/hicolor/scalable/apps"
+                install -m 0644 "$tmp_dir/autotun.svg" \
+                    "$icons_home/hicolor/scalable/apps/autotun.svg"
+            fi
+            if [ -f "$tmp_dir/autotun.png" ]; then
+                mkdir -p "$icons_home/hicolor/256x256/apps"
+                install -m 0644 "$tmp_dir/autotun.png" \
+                    "$icons_home/hicolor/256x256/apps/autotun.png"
+            fi
             printf 'Installed autotun GUI to %s/autotun-gui\n' "$INSTALL_DIR"
         fi
     else

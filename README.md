@@ -1,4 +1,4 @@
-# autotun
+# <img src="packaging/autotun.svg" width="32" alt=""> autotun
 
 [![CI](https://github.com/thuanlm215/autotun/actions/workflows/ci.yml/badge.svg)](https://github.com/thuanlm215/autotun/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/thuanlm215/autotun)](https://github.com/thuanlm215/autotun/releases/latest)
@@ -14,7 +14,9 @@ the path into an SSH AI CLI.
 Existing SSH configuration works as usual: aliases, keys, agents, `ProxyJump`,
 and custom options.
 
-![autotun TUI showing forward and reverse SSH tunnels](docs/screenshot.png)
+![autotun TUI showing forward SSH tunnels](docs/screenshot.png)
+
+![autotun desktop GUI showing forward and reverse SSH tunnels](docs/screenshot-gui.png)
 
 ## Features
 

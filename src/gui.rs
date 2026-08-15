@@ -42,7 +42,11 @@ pub fn run(cli: &Cli) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("autotun")
             .with_inner_size([960.0, 560.0])
-            .with_min_inner_size([840.0, 420.0]),
+            .with_min_inner_size([840.0, 420.0])
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../packaging/autotun.png"))
+                    .expect("packaging/autotun.png is a valid PNG"),
+            ),
         ..Default::default()
     };
     let app = GuiApp::from_cli(cli);

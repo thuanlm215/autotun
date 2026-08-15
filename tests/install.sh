@@ -32,7 +32,10 @@ mkdir -p "$fixture/gui"
 printf '#!/bin/sh\nprintf "autotun-gui fixture\\n"\n' >"$fixture/gui/autotun-gui"
 chmod +x "$fixture/gui/autotun-gui"
 printf '%s\n' '[Desktop Entry]' 'Exec=autotun --gui' >"$fixture/gui/autotun.desktop"
-tar -C "$fixture/gui" -czf "$fixture/$gui_archive" autotun-gui autotun.desktop
+printf '<svg xmlns="http://www.w3.org/2000/svg"/>\n' >"$fixture/gui/autotun.svg"
+printf 'png\n' >"$fixture/gui/autotun.png"
+tar -C "$fixture/gui" -czf "$fixture/$gui_archive" \
+    autotun-gui autotun.desktop autotun.svg autotun.png
 (cd "$fixture" && sha256sum "$archive" "$gui_archive" >SHA256SUMS)
 
 xdg="$fixture/xdg"
@@ -48,5 +51,7 @@ grep -q "Installed autotun GUI" <<<"$output"
 test -x "$fixture/install/autotun-gui"
 test "$("$fixture/install/autotun-gui")" = "autotun-gui fixture"
 grep -q "Exec=$fixture/install/autotun --gui" "$xdg/applications/autotun.desktop"
+test -f "$xdg/icons/hicolor/scalable/apps/autotun.svg"
+test -f "$xdg/icons/hicolor/256x256/apps/autotun.png"
 
 printf 'installer test passed\n'
