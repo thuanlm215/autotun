@@ -39,6 +39,7 @@ const TABLE_BOTTOM_GAP: f32 = 12.0;
 const AUTHOR_NAME: &str = "thuanlm215";
 const AUTHOR_URL: &str = "https://github.com/thuanlm215/autotun";
 const CONNECT_PREFS_KEY: &str = "autotun.connect-preferences";
+const APP_ICON: &[u8] = include_bytes!("../packaging/autotun.png");
 
 pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -48,7 +49,7 @@ pub fn run(cli: &Cli) -> Result<()> {
             .with_inner_size([960.0, 560.0])
             .with_min_inner_size([840.0, 420.0])
             .with_icon(
-                eframe::icon_data::from_png_bytes(include_bytes!("../packaging/autotun.png"))
+                eframe::icon_data::from_png_bytes(APP_ICON)
                     .expect("packaging/autotun.png is a valid PNG"),
             ),
         ..Default::default()
@@ -73,6 +74,7 @@ struct GuiApp {
     include_loopback: bool,
     auto_forward: bool,
     connect_error: Option<String>,
+    connect_icon: Option<egui::TextureHandle>,
     session: Option<SessionUi>,
 }
 
@@ -159,6 +161,7 @@ impl GuiApp {
             include_loopback: cli.include_loopback,
             auto_forward: !cli.no_auto_forward,
             connect_error: None,
+            connect_icon: None,
             session: None,
         };
         if cli.destination.is_some() {
@@ -270,8 +273,20 @@ impl eframe::App for GuiApp {
 
 impl GuiApp {
     fn connect_ui(&mut self, ui: &mut egui::Ui) {
+        let icon = self
+            .connect_icon
+            .get_or_insert_with(|| {
+                ui.ctx().load_texture(
+                    "autotun-connect-icon",
+                    app_icon_image(),
+                    egui::TextureOptions::LINEAR,
+                )
+            })
+            .clone();
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            ui.add_space(36.0);
+            ui.add_space(22.0);
+            ui.image((icon.id(), Vec2::splat(72.0)));
+            ui.add_space(8.0);
             ui.heading(RichText::new("autotun").size(26.0));
             ui.label(
                 RichText::new("Connect over SSH and manage port forwards.")
@@ -778,6 +793,15 @@ fn primary_button(label: &str) -> egui::Button<'static> {
 
 fn hint(text: &str) -> RichText {
     RichText::new(text).color(Color32::from_rgba_unmultiplied(214, 218, 224, 100))
+}
+
+fn app_icon_image() -> egui::ColorImage {
+    let icon =
+        eframe::icon_data::from_png_bytes(APP_ICON).expect("packaging/autotun.png is a valid PNG");
+    egui::ColorImage::from_rgba_unmultiplied(
+        [icon.width as usize, icon.height as usize],
+        &icon.rgba,
+    )
 }
 
 fn author_footer(ui: &mut egui::Ui) {
