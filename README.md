@@ -58,7 +58,7 @@ Install a specific version or choose another destination:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thuanlm215/autotun/main/install.sh \
-  | AUTOTUN_VERSION=1.2.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
+  | AUTOTUN_VERSION=1.5.0 AUTOTUN_INSTALL_DIR="$HOME/bin" sh
 ```
 
 Download and inspect the script first if you prefer not to pipe to `sh`:
@@ -83,9 +83,19 @@ cargo install --git https://github.com/thuanlm215/autotun --locked
 Or from a checkout:
 
 ```sh
+# TUI
 cargo build --release --locked
 install -Dm755 target/release/autotun "$HOME/.local/bin/autotun"
+
+# Desktop GUI
+cargo build --release --locked --features gui --bin autotun-gui
+./target/release/autotun-gui
 ```
+
+The release installer also installs the GUI binary, desktop entries, and icon
+assets. Run it on the **local graphical host** (including the host that shows
+Waypipe windows), not only on a headless VM. Running an extracted
+`autotun-gui` binary directly does not register its icon with the desktop.
 
 ## Usage
 
@@ -120,8 +130,20 @@ autotun --gui
 autotun --gui development-server
 ```
 
-The installer also adds an application menu entry. `autotun host` still opens
-the TUI.
+The installer adds an application-menu entry and installs both scalable and
+taskbar-sized icons. It refreshes the desktop cache for KDE when available.
+Log out and back in if your desktop still shows a stale icon. `autotun host`
+still opens the TUI.
+
+On KDE Wayland, the taskbar resolves autotun's icon through these desktop
+entries; the compositor may still use a generic titlebar icon because the
+current winit/eframe stack cannot set a Wayland toplevel icon directly.
+
+The GUI remembers the last **Destination**, **Reverse ports**, and **Extra SSH
+args** when it closes. On Linux this is stored with the GUI state at
+`$XDG_DATA_HOME/autotun/app.ron` (normally
+`~/.local/share/autotun/app.ron`). CLI/TUI invocations do not read or update
+these preferences.
 
 ### Remote Wayland apps (desktop GUI)
 
@@ -141,14 +163,14 @@ sudo apt install waypipe
 sudo pacman -S waypipe
 ```
 
-Connect in the GUI, enter a command such as `firefox --new-instance` in
-**Remote Wayland Apps**, then select **Launch**. The command is parsed into an
+Connect in the GUI, open the **Remote Apps** tab, enter a command such as
+`firefox --new-instance`, then select **Launch**. The command is parsed into an
 argument vector rather than run through a shell, so shell syntax such as `|`,
 `>`, and `&&` is not supported. Multiple apps can run at once; **Stop** ends
 the local Waypipe/SSH process for that app. Autotun stops all launched apps on
 Disconnect or when the GUI exits, and does not restart or preserve them.
 Finished entries are cleared automatically on the next launch; diagnostics are
-collapsed by default and can also be removed with **Clear finished**. Autotun
+collapsed by default and can also be removed with **Clear history**. Autotun
 uses Waypipe's `--no-gpu` mode for compatibility with headless VMs that do not
 provide an accessible DRM render node.
 
