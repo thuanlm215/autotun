@@ -79,10 +79,17 @@ struct SessionUi {
     remote_apps: RemoteAppManager,
     remote_command: String,
     remote_app_error: Option<String>,
+    page: SessionPage,
     filter: String,
     form: Option<FormUi>,
     form_error: Option<String>,
     clip_notice: Option<ClipNotice>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionPage {
+    Tunnels,
+    RemoteApps,
 }
 
 impl Drop for SessionUi {
@@ -170,6 +177,7 @@ impl GuiApp {
                     remote_apps: RemoteAppManager::default(),
                     remote_command: String::new(),
                     remote_app_error: None,
+                    page: SessionPage::Tunnels,
                     filter: String::new(),
                     form: None,
                     form_error: None,
@@ -327,98 +335,133 @@ impl GuiApp {
             return;
         };
 
-        ui.add_space(10.0);
-        clip_banner(ui, session);
-        if session.clip_notice.is_some() {
-            ui.add_space(8.0);
+        ui.add_space(12.0);
+        session_tabs(ui, session);
+        ui.add_space(12.0);
+        match session.page {
+            SessionPage::Tunnels => tunnels_panel(ui, session),
+            SessionPage::RemoteApps => remote_apps_panel(ui, session),
         }
-        remote_apps_panel(ui, session);
-        ui.add_space(8.0);
-
-        let mut save_form = false;
-        let mut cancel_form = false;
-        if let Some(form) = session.form.as_mut() {
-            card().show(ui, |ui| {
-                ui.label(RichText::new(&form.title).strong());
-                ui.add_space(6.0);
-                let (source_label, requested_label) = match form.direction {
-                    Direction::Local => ("Remote port", "Local port (optional)"),
-                    Direction::Reverse => ("Local port", "Remote port (optional)"),
-                };
-                ui.horizontal(|ui| {
-                    ui.label(source_label);
-                    ui.add(egui::TextEdit::singleline(&mut form.source).desired_width(80.0));
-                    ui.add_space(8.0);
-                    ui.label(requested_label);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut form.requested)
-                            .desired_width(80.0)
-                            .hint_text("same"),
-                    );
-                    ui.add_space(8.0);
-                    ui.label("Label");
-                    ui.add(egui::TextEdit::singleline(&mut form.label).desired_width(140.0));
-                    ui.add_space(8.0);
-                    save_form = ui.add(primary_button("Save")).clicked();
-                    cancel_form = ui.button("Cancel").clicked();
-                });
-            });
-            if let Some(error) = &session.form_error {
-                ui.add_space(6.0);
-                ui.colored_label(ERR_COLOR, error);
-            }
-            ui.add_space(8.0);
-        }
-        if cancel_form {
-            session.form = None;
-            session.form_error = None;
-        } else if save_form && let Some(form) = session.form.take() {
-            match engine::tunnel_from_form(
-                form.direction,
-                &form.source,
-                &form.requested,
-                &form.label,
-            ) {
-                Ok(tunnel) => {
-                    if let Some(index) = form.edit_index {
-                        session.engine.edit(index, tunnel, form.was_enabled);
-                    } else {
-                        session.engine.add(tunnel);
-                    }
-                    session.form_error = None;
-                }
-                Err(error) => {
-                    session.form_error = Some(format!("{error:#}"));
-                    session.form = Some(form);
-                }
-            }
-        }
-
-        let filter = session.filter.to_lowercase();
-        let visible: Vec<usize> = session
-            .engine
-            .tunnels()
-            .iter()
-            .enumerate()
-            .filter(|(_, tunnel)| tunnel_matches(tunnel, &filter))
-            .map(|(index, _)| index)
-            .collect();
-        tunnel_table(ui, session, &visible);
     }
 }
 
+fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
+    ui.horizontal(|ui| {
+        ui.heading("Tunnels");
+        ui.label(
+            RichText::new("Manage forwarded and reverse ports.")
+                .color(MUTED)
+                .size(FONT_HEADER),
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui.add(primary_button("Forward")).clicked() {
+                session.form = Some(FormUi::new(Direction::Local));
+                session.form_error = None;
+            }
+            if ui.button("Reverse").clicked() {
+                session.form = Some(FormUi::new(Direction::Reverse));
+                session.form_error = None;
+            }
+            if ui.button("Rescan").clicked() {
+                session.engine.rescan();
+            }
+        });
+    });
+    ui.add_space(8.0);
+    clip_banner(ui, session);
+    if session.clip_notice.is_some() {
+        ui.add_space(8.0);
+    }
+
+    let mut save_form = false;
+    let mut cancel_form = false;
+    if let Some(form) = session.form.as_mut() {
+        card().show(ui, |ui| {
+            ui.label(RichText::new(&form.title).strong());
+            ui.add_space(6.0);
+            let (source_label, requested_label) = match form.direction {
+                Direction::Local => ("Remote port", "Local port (optional)"),
+                Direction::Reverse => ("Local port", "Remote port (optional)"),
+            };
+            ui.horizontal(|ui| {
+                ui.label(source_label);
+                ui.add(egui::TextEdit::singleline(&mut form.source).desired_width(80.0));
+                ui.add_space(8.0);
+                ui.label(requested_label);
+                ui.add(
+                    egui::TextEdit::singleline(&mut form.requested)
+                        .desired_width(80.0)
+                        .hint_text("same"),
+                );
+                ui.add_space(8.0);
+                ui.label("Label");
+                ui.add(egui::TextEdit::singleline(&mut form.label).desired_width(140.0));
+                ui.add_space(8.0);
+                save_form = ui.add(primary_button("Save")).clicked();
+                cancel_form = ui.button("Cancel").clicked();
+            });
+        });
+        if let Some(error) = &session.form_error {
+            ui.add_space(6.0);
+            ui.colored_label(ERR_COLOR, error);
+        }
+        ui.add_space(8.0);
+    }
+    if cancel_form {
+        session.form = None;
+        session.form_error = None;
+    } else if save_form && let Some(form) = session.form.take() {
+        match engine::tunnel_from_form(form.direction, &form.source, &form.requested, &form.label) {
+            Ok(tunnel) => {
+                if let Some(index) = form.edit_index {
+                    session.engine.edit(index, tunnel, form.was_enabled);
+                } else {
+                    session.engine.add(tunnel);
+                }
+                session.form_error = None;
+            }
+            Err(error) => {
+                session.form_error = Some(format!("{error:#}"));
+                session.form = Some(form);
+            }
+        }
+    }
+
+    let filter = session.filter.to_lowercase();
+    let visible: Vec<usize> = session
+        .engine
+        .tunnels()
+        .iter()
+        .enumerate()
+        .filter(|(_, tunnel)| tunnel_matches(tunnel, &filter))
+        .map(|(index, _)| index)
+        .collect();
+    tunnel_table(ui, session, &visible);
+}
+
 fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
+    ui.horizontal(|ui| {
+        ui.heading("Remote Apps");
+        ui.label(
+            RichText::new("Launch a Wayland app on the VM through Waypipe.")
+                .color(MUTED)
+                .size(FONT_HEADER),
+        );
+    });
+    ui.add_space(8.0);
     card().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Remote Wayland Apps").strong());
             ui.label(
-                RichText::new("Waypipe runs the app on the VM and shows its window here.")
+                RichText::new("Waypipe runs the app on the VM and shows its window on this host.")
                     .color(MUTED)
                     .size(FONT_HEADER),
             );
-            if session.remote_apps.has_finished() && ui.small_button("Clear finished").clicked() {
-                session.remote_apps.clear_finished();
-            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if session.remote_apps.has_finished() && ui.small_button("Clear history").clicked()
+                {
+                    session.remote_apps.clear_finished();
+                }
+            });
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -426,7 +469,7 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut session.remote_command)
                     .desired_width(360.0)
-                    .hint_text("firefox --new-instance"),
+                    .hint_text("e.g. firefox --new-instance"),
             );
             let launch = ui.add(primary_button("Launch")).clicked()
                 || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
@@ -458,24 +501,16 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
         ui.add_space(5.0);
         let mut stop = None;
         for app in apps {
+            let color = remote_app_status_color(&app.status);
             ui.horizontal(|ui| {
                 ui.monospace(&app.command);
-                let (color, label) = match &app.status {
-                    RemoteAppStatus::Starting => (WARN_COLOR, "starting"),
-                    RemoteAppStatus::Running => (ON_COLOR, "running"),
-                    RemoteAppStatus::Exited(_) => (MUTED, "exited"),
-                    RemoteAppStatus::Failed(_) => (ERR_COLOR, "failed"),
-                };
-                status_pill(ui, label, color);
+                status_pill(ui, app.status.label(), color);
                 if app.status.can_stop() && ui.button("Stop").clicked() {
                     stop = Some(app.id);
                 }
             });
             if let Some(details) = app.status.details() {
-                let color = match app.status {
-                    RemoteAppStatus::Failed(_) => ERR_COLOR,
-                    _ => MUTED,
-                };
+                ui.label(RichText::new(remote_app_summary(details)).color(color));
                 ui.push_id(app.id, |ui| {
                     ui.collapsing("Details", |ui| {
                         ui.add(
@@ -489,6 +524,41 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
             session.remote_apps.stop(id);
         }
     });
+}
+
+fn session_tabs(ui: &mut egui::Ui, session: &mut SessionUi) {
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut session.page, SessionPage::Tunnels, "Tunnels");
+        ui.selectable_value(&mut session.page, SessionPage::RemoteApps, "Remote Apps");
+    });
+}
+
+fn remote_app_status_color(status: &RemoteAppStatus) -> Color32 {
+    match status {
+        RemoteAppStatus::Starting => WARN_COLOR,
+        RemoteAppStatus::Running => ON_COLOR,
+        RemoteAppStatus::Exited(_) => MUTED,
+        RemoteAppStatus::Failed(_) => ERR_COLOR,
+    }
+}
+
+fn remote_app_summary(details: &str) -> String {
+    let preferred = [
+        "Failed to execvp",
+        "Failed initializing GTK",
+        "Permission denied",
+    ]
+    .into_iter()
+    .find_map(|needle| details.find(needle).map(|index| &details[index..]))
+    .or_else(|| details.lines().find(|line| !line.trim().is_empty()))
+    .unwrap_or(details)
+    .trim();
+    const LIMIT: usize = 112;
+    if preferred.chars().count() > LIMIT {
+        format!("{}…", preferred.chars().take(LIMIT - 1).collect::<String>())
+    } else {
+        preferred.to_owned()
+    }
 }
 
 fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool) {
@@ -515,10 +585,6 @@ fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool)
             {
                 *disconnect = true;
             }
-            ui.add_space(10.0);
-            if ui.button("Rescan").clicked() {
-                session.engine.rescan();
-            }
             if ui
                 .button("Send screenshot")
                 .on_hover_text("Upload the clipboard PNG to the remote host")
@@ -530,15 +596,6 @@ fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool)
                         session.clip_notice = Some(ClipNotice::Error(format!("{error:#}")))
                     }
                 }
-            }
-            ui.add_space(10.0);
-            if ui.add(primary_button("Reverse")).clicked() {
-                session.form = Some(FormUi::new(Direction::Reverse));
-                session.form_error = None;
-            }
-            if ui.add(primary_button("Forward")).clicked() {
-                session.form = Some(FormUi::new(Direction::Local));
-                session.form_error = None;
             }
         });
     });
