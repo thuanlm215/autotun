@@ -2,7 +2,7 @@
 
 use clap::{Parser, Subcommand};
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(version, about = "Discover and toggle SSH tunnels from a TUI")]
 #[command(subcommand_negates_reqs = true)]
 pub struct Cli {
@@ -38,7 +38,7 @@ pub struct Cli {
     pub gui: bool,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Clone, Debug, Subcommand)]
 pub enum Command {
     /// Upload the local clipboard image to the remote host and copy the path
     Clip {

@@ -7,6 +7,7 @@ use eframe::egui::{
     self, Align, Color32, CornerRadius, FontFamily, FontId, Layout, Margin, Rect, RichText, Stroke,
     TextStyle, Vec2,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cli::Cli,
@@ -37,6 +38,7 @@ const ROW_INSET: f32 = 12.0;
 const TABLE_BOTTOM_GAP: f32 = 12.0;
 const AUTHOR_NAME: &str = "thuanlm215";
 const AUTHOR_URL: &str = "https://github.com/thuanlm215/autotun";
+const CONNECT_PREFS_KEY: &str = "autotun.connect-preferences";
 
 pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -51,13 +53,13 @@ pub fn run(cli: &Cli) -> Result<()> {
             ),
         ..Default::default()
     };
-    let app = GuiApp::from_cli(cli);
+    let cli = cli.clone();
     eframe::run_native(
         "autotun",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             apply_theme(&cc.egui_ctx);
-            Ok(Box::new(app))
+            Ok(Box::new(GuiApp::from_cli(&cli, cc.storage)))
         }),
     )
     .map_err(|error| anyhow::anyhow!("GUI failed: {error}"))
@@ -72,6 +74,13 @@ struct GuiApp {
     auto_forward: bool,
     connect_error: Option<String>,
     session: Option<SessionUi>,
+}
+
+#[derive(Default, Deserialize, Serialize)]
+struct ConnectPreferences {
+    destination: String,
+    reverse_text: String,
+    ssh_args_text: String,
 }
 
 struct SessionUi {
@@ -117,7 +126,12 @@ struct FormUi {
 }
 
 impl GuiApp {
-    fn from_cli(cli: &Cli) -> Self {
+    fn from_cli(cli: &Cli, storage: Option<&dyn eframe::Storage>) -> Self {
+        let saved = storage
+            .and_then(|storage| eframe::get_value::<ConnectPreferences>(storage, CONNECT_PREFS_KEY))
+            .unwrap_or_default();
+        let use_saved =
+            cli.destination.is_none() && cli.reverse_ports.is_empty() && cli.ssh_args.is_empty();
         let reverse_text = cli
             .reverse_ports
             .iter()
@@ -126,9 +140,21 @@ impl GuiApp {
             .join(", ");
         let ssh_args_text = cli.ssh_args.join(" ");
         let mut app = Self {
-            destination: cli.destination.clone().unwrap_or_default(),
-            reverse_text,
-            ssh_args_text,
+            destination: if use_saved {
+                saved.destination
+            } else {
+                cli.destination.clone().unwrap_or_default()
+            },
+            reverse_text: if use_saved {
+                saved.reverse_text
+            } else {
+                reverse_text
+            },
+            ssh_args_text: if use_saved {
+                saved.ssh_args_text
+            } else {
+                ssh_args_text
+            },
             interval_text: cli.interval.to_string(),
             include_loopback: cli.include_loopback,
             auto_forward: !cli.no_auto_forward,
@@ -228,6 +254,18 @@ impl eframe::App for GuiApp {
                 }
             });
     }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(
+            storage,
+            CONNECT_PREFS_KEY,
+            &ConnectPreferences {
+                destination: self.destination.clone(),
+                reverse_text: self.reverse_text.clone(),
+                ssh_args_text: self.ssh_args_text.clone(),
+            },
+        );
+    }
 }
 
 impl GuiApp {
@@ -255,7 +293,7 @@ impl GuiApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.destination)
                                 .desired_width(f32::INFINITY)
-                                .hint_text("user@host or SSH alias"),
+                                .hint_text(hint("user@host or SSH alias")),
                         );
                         ui.end_row();
 
@@ -263,7 +301,7 @@ impl GuiApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.reverse_text)
                                 .desired_width(f32::INFINITY)
-                                .hint_text("optional, e.g. 3000, 8080"),
+                                .hint_text(hint("optional, e.g. 3000, 8080")),
                         );
                         ui.end_row();
 
@@ -271,7 +309,7 @@ impl GuiApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.ssh_args_text)
                                 .desired_width(f32::INFINITY)
-                                .hint_text("optional, e.g. -J bastion"),
+                                .hint_text(hint("optional, e.g. -J bastion")),
                         );
                         ui.end_row();
 
@@ -391,7 +429,7 @@ fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
                 ui.add(
                     egui::TextEdit::singleline(&mut form.requested)
                         .desired_width(80.0)
-                        .hint_text("same"),
+                        .hint_text(hint("same")),
                 );
                 ui.add_space(8.0);
                 ui.label("Label");
@@ -469,7 +507,7 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
             let response = ui.add(
                 egui::TextEdit::singleline(&mut session.remote_command)
                     .desired_width(360.0)
-                    .hint_text("e.g. firefox --new-instance"),
+                    .hint_text(hint("e.g. firefox --new-instance")),
             );
             let launch = ui.add(primary_button("Launch")).clicked()
                 || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
@@ -615,7 +653,7 @@ fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi) {
         ui.add(
             egui::TextEdit::singleline(&mut session.filter)
                 .desired_width(280.0)
-                .hint_text("label or port"),
+                .hint_text(hint("label or port")),
         );
         ui.label(
             RichText::new(format!("{shown} / {total}"))
@@ -747,6 +785,10 @@ fn card() -> egui::Frame {
 fn primary_button(label: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(label.to_owned()).color(Color32::from_rgb(240, 248, 248)))
         .fill(ACCENT)
+}
+
+fn hint(text: &str) -> RichText {
+    RichText::new(text).color(Color32::from_rgba_unmultiplied(214, 218, 224, 100))
 }
 
 fn author_footer(ui: &mut egui::Ui) {
