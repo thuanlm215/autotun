@@ -35,6 +35,8 @@ and custom options.
 - Inline multi-line add/edit forms; help bar toggle with `?`.
 - Forwards a local clipboard PNG to `/tmp/autotun-clip-*.png` on the remote
   host (`p` / **Send screenshot** / `autotun clip`) for pasting into an AI CLI.
+- In the desktop GUI, launches remote Wayland applications through Waypipe so
+  their windows appear on the local desktop.
 - Static Linux binaries for x86-64 and ARM64. Optional desktop GUI.
 
 ## Installation
@@ -120,6 +122,41 @@ autotun --gui development-server
 
 The installer also adds an application menu entry. `autotun host` still opens
 the TUI.
+
+### Remote Wayland apps (desktop GUI)
+
+`autotun --gui` can run a graphical application on the remote host and display
+its window on the local desktop using [Waypipe](https://gitlab.freedesktop.org/mstoeckl/waypipe/).
+This is GUI-only; the TUI deliberately does not manage graphical applications.
+
+The local machine must be running a Wayland session, and `waypipe` must be
+installed on **both** the local machine and the remote host. Autotun only checks
+these prerequisites; it never installs packages or runs `sudo`.
+
+```sh
+# Debian/Ubuntu, run once on each machine
+sudo apt install waypipe
+
+# Arch, run once on each machine
+sudo pacman -S waypipe
+```
+
+Connect in the GUI, enter a command such as `firefox --new-instance` in
+**Remote Wayland Apps**, then select **Launch**. The command is parsed into an
+argument vector rather than run through a shell, so shell syntax such as `|`,
+`>`, and `&&` is not supported. Multiple apps can run at once; **Stop** ends
+the local Waypipe/SSH process for that app. Autotun stops all launched apps on
+Disconnect or when the GUI exits, and does not restart or preserve them.
+
+Waypipe reuses autotun's authenticated OpenSSH ControlMaster, so SSH aliases,
+keys, agents, `ProxyJump`, and `--ssh-arg` options used to create the session
+continue to apply. It requires OpenSSH support for Unix-socket forwarding.
+
+Some desktop applications reuse an already-running instance and may open a
+window on the remote desktop instead. Use that application's new-instance or
+new-profile option when available (for example, `firefox --new-instance`).
+Waypipe is intended for Wayland clients; X11-only apps, desktop persistence,
+and reconnecting an app after an SSH outage are outside this MVP.
 
 ### Clipboard image → remote AI CLI
 

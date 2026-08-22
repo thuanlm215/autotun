@@ -9,5 +9,6 @@ pub mod engine;
 #[cfg(feature = "gui")]
 pub mod gui;
 pub mod ports;
+pub mod remote_app;
 pub mod scan;
 pub mod ssh;

@@ -12,6 +12,7 @@ use crate::{
     cli::Cli,
     engine::{self, Engine},
     ports::Direction,
+    remote_app::{RemoteAppManager, RemoteAppStatus},
 };
 
 const ACCENT: Color32 = Color32::from_rgb(56, 148, 156);
@@ -75,10 +76,22 @@ struct GuiApp {
 
 struct SessionUi {
     engine: Engine,
+    remote_apps: RemoteAppManager,
+    remote_command: String,
+    remote_app_error: Option<String>,
     filter: String,
     form: Option<FormUi>,
     form_error: Option<String>,
     clip_notice: Option<ClipNotice>,
+}
+
+impl Drop for SessionUi {
+    fn drop(&mut self) {
+        // Waypipe owns an SSH client using the ControlMaster. Stop those
+        // children before Engine drops its master connection.
+        self.remote_apps.stop_all();
+        self.engine.shutdown();
+    }
 }
 
 enum ClipNotice {
@@ -154,6 +167,9 @@ impl GuiApp {
             Ok(engine) => {
                 self.session = Some(SessionUi {
                     engine,
+                    remote_apps: RemoteAppManager::default(),
+                    remote_command: String::new(),
+                    remote_app_error: None,
                     filter: String::new(),
                     form: None,
                     form_error: None,
@@ -296,8 +312,10 @@ impl GuiApp {
                 return;
             };
             session.engine.poll();
+            session.remote_apps.poll();
             header_bar(ui, session, &mut disconnect);
             if disconnect {
+                session.remote_apps.stop_all();
                 session.engine.shutdown();
             }
         }
@@ -314,6 +332,8 @@ impl GuiApp {
         if session.clip_notice.is_some() {
             ui.add_space(8.0);
         }
+        remote_apps_panel(ui, session);
+        ui.add_space(8.0);
 
         let mut save_form = false;
         let mut cancel_form = false;
@@ -385,6 +405,83 @@ impl GuiApp {
             .collect();
         tunnel_table(ui, session, &visible);
     }
+}
+
+fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
+    card().show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Remote Wayland Apps").strong());
+            ui.label(
+                RichText::new("Waypipe runs the app on the VM and shows its window here.")
+                    .color(MUTED)
+                    .size(FONT_HEADER),
+            );
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Command");
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut session.remote_command)
+                    .desired_width(360.0)
+                    .hint_text("firefox --new-instance"),
+            );
+            let launch = ui.add(primary_button("Launch")).clicked()
+                || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
+            if launch {
+                let control = session.engine.ssh_control();
+                match session.remote_apps.launch(&session.remote_command, control) {
+                    Ok(()) => {
+                        session.remote_command.clear();
+                        session.remote_app_error = None;
+                    }
+                    Err(error) => session.remote_app_error = Some(format!("{error:#}")),
+                }
+            }
+        });
+
+        if let Some(error) = &session.remote_app_error {
+            ui.colored_label(ERR_COLOR, error);
+        }
+
+        let apps = session.remote_apps.apps();
+        if apps.is_empty() {
+            ui.label(
+                RichText::new("Requires a local Wayland session and waypipe on both host and VM.")
+                    .color(MUTED)
+                    .size(FONT_HEADER),
+            );
+            return;
+        }
+        ui.add_space(5.0);
+        let mut stop = None;
+        for app in apps {
+            ui.horizontal(|ui| {
+                ui.monospace(&app.command);
+                let (color, label) = match &app.status {
+                    RemoteAppStatus::Starting => (WARN_COLOR, "starting"),
+                    RemoteAppStatus::Running => (ON_COLOR, "running"),
+                    RemoteAppStatus::Exited(_) => (MUTED, "exited"),
+                    RemoteAppStatus::Failed(_) => (ERR_COLOR, "failed"),
+                };
+                status_pill(ui, label, color);
+                if app.status.can_stop() && ui.button("Stop").clicked() {
+                    stop = Some(app.id);
+                }
+            });
+            if let Some(details) = app.status.details() {
+                ui.add(
+                    egui::Label::new(RichText::new(details).color(match app.status {
+                        RemoteAppStatus::Failed(_) => ERR_COLOR,
+                        _ => MUTED,
+                    }))
+                    .selectable(true),
+                );
+            }
+        }
+        if let Some(id) = stop {
+            session.remote_apps.stop(id);
+        }
+    });
 }
 
 fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool) {

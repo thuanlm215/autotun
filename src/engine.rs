@@ -22,7 +22,7 @@ use crate::{
         Direction, MAX_PORT_FALLBACKS, Protocol, RemoteListener, Tunnel, available_local_port,
     },
     scan::{ScanAction, plan_scan, tunnel_from_listener},
-    ssh::SshSession,
+    ssh::{SshControl, SshSession},
 };
 
 enum ScanEvent {
@@ -148,6 +148,11 @@ impl Engine {
 
     pub fn destination(&self) -> &str {
         self.session.destination()
+    }
+
+    /// Details for child tools that must reuse this session's ControlMaster.
+    pub fn ssh_control(&self) -> SshControl {
+        self.session.control_info()
     }
 
     pub fn connected(&self) -> bool {

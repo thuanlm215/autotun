@@ -9,6 +9,33 @@ use anyhow::{Context, Result, bail};
 
 use crate::ports::{Direction, RemoteListener, parse_ss_listeners};
 
+/// The already-authenticated OpenSSH multiplex connection used by a session.
+///
+/// Callers must pass both values to a new SSH client with `-S`; this reuses the
+/// existing ControlMaster instead of establishing another network connection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SshControl {
+    destination: String,
+    socket: PathBuf,
+}
+
+impl SshControl {
+    pub(crate) fn new(destination: String, socket: PathBuf) -> Self {
+        Self {
+            destination,
+            socket,
+        }
+    }
+
+    pub fn destination(&self) -> &str {
+        &self.destination
+    }
+
+    pub fn socket(&self) -> &PathBuf {
+        &self.socket
+    }
+}
+
 pub struct SshSession {
     destination: String,
     socket: PathBuf,
@@ -24,6 +51,12 @@ impl SshSession {
 
     pub fn socket(&self) -> &PathBuf {
         &self.socket
+    }
+
+    /// Return the destination and socket needed by programs which can reuse
+    /// this OpenSSH ControlMaster (for example, `waypipe ssh -S ...`).
+    pub fn control_info(&self) -> SshControl {
+        SshControl::new(self.destination.clone(), self.socket.clone())
     }
 
     pub fn connect(destination: String, socket: PathBuf, extra_args: Vec<String>) -> Result<Self> {
