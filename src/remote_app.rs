@@ -50,6 +50,10 @@ impl RemoteAppStatus {
     pub fn can_stop(&self) -> bool {
         matches!(self, Self::Starting | Self::Running)
     }
+
+    pub fn is_finished(&self) -> bool {
+        matches!(self, Self::Exited(_) | Self::Failed(_))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +148,9 @@ impl Default for RemoteAppManager {
 impl RemoteAppManager {
     pub fn launch(&mut self, command: &str, control: SshControl) -> Result<()> {
         let argv = parse_remote_command(command)?;
+        // Keep active apps, but do not let diagnostics from previous attempts
+        // accumulate forever in the compact GUI panel.
+        self.clear_finished();
         let id = self.next_id;
         self.next_id += 1;
         self.apps.push(RemoteApp {
@@ -281,16 +288,20 @@ impl RemoteAppManager {
             };
             app.stderr = None;
             app.pending_exit = None;
-            app.info.status = if status.success() {
-                RemoteAppStatus::Exited(exit_details(status.code(), &stderr))
-            } else {
-                RemoteAppStatus::Failed(exit_details(status.code(), &stderr))
-            };
+            app.info.status = completed_status(status, &stderr);
         }
     }
 
     pub fn apps(&self) -> Vec<RemoteAppInfo> {
         self.apps.iter().map(|app| app.info.clone()).collect()
+    }
+
+    pub fn has_finished(&self) -> bool {
+        self.apps.iter().any(|app| app.info.status.is_finished())
+    }
+
+    pub fn clear_finished(&mut self) {
+        self.apps.retain(|app| !app.info.status.is_finished());
     }
 
     pub fn stop(&mut self, id: u64) {
@@ -385,6 +396,10 @@ fn waypipe_command(waypipe: &Path, control: &SshControl, argv: &[String]) -> Com
         .collect::<Vec<_>>()
         .join(" ");
     command
+        // Remote VMs commonly have no usable DRM render node. Advertising
+        // dmabuf there makes GTK/WebKit probe /dev/dri and fail noisily;
+        // shared-memory buffers are slower but reliable over SSH.
+        .arg("--no-gpu")
         .arg("ssh")
         .args(["-S"])
         .arg(control.socket())
@@ -447,6 +462,18 @@ fn exit_details(code: Option<i32>, stderr: &str) -> String {
     }
 }
 
+fn completed_status(status: ExitStatus, stderr: &str) -> RemoteAppStatus {
+    let details = exit_details(status.code(), stderr);
+    // Waypipe 0.8.x can exit successfully even when execvp fails or the child
+    // panics. Treat those unambiguous child failures as failures in the UI.
+    let child_failed = stderr.contains("Failed to execvp") || stderr.contains("panicked at");
+    if status.success() && !child_failed {
+        RemoteAppStatus::Exited(details)
+    } else {
+        RemoteAppStatus::Failed(details)
+    }
+}
+
 fn stop_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
@@ -490,6 +517,7 @@ mod tests {
         assert_eq!(
             args,
             [
+                "--no-gpu",
                 "ssh",
                 "-S",
                 "/tmp/autotun.sock",
@@ -498,7 +526,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            shell_words::split(&args[4]).unwrap(),
+            shell_words::split(&args[5]).unwrap(),
             [
                 "firefox",
                 "--profile",
@@ -515,6 +543,19 @@ mod tests {
         assert_eq!(RemoteAppStatus::Running.label(), "running");
         assert!(RemoteAppStatus::Starting.can_stop());
         assert!(!RemoteAppStatus::Exited("done".into()).can_stop());
+        assert!(RemoteAppStatus::Failed("boom".into()).is_finished());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn successful_waypipe_exit_with_child_failure_is_failed() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let success = ExitStatus::from_raw(0);
+        assert!(matches!(
+            completed_status(success, "Failed to execvp 'firefox': No such file"),
+            RemoteAppStatus::Failed(_)
+        ));
     }
 
     #[test]

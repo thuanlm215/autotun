@@ -147,6 +147,10 @@ argument vector rather than run through a shell, so shell syntax such as `|`,
 `>`, and `&&` is not supported. Multiple apps can run at once; **Stop** ends
 the local Waypipe/SSH process for that app. Autotun stops all launched apps on
 Disconnect or when the GUI exits, and does not restart or preserve them.
+Finished entries are cleared automatically on the next launch; diagnostics are
+collapsed by default and can also be removed with **Clear finished**. Autotun
+uses Waypipe's `--no-gpu` mode for compatibility with headless VMs that do not
+provide an accessible DRM render node.
 
 Waypipe reuses autotun's authenticated OpenSSH ControlMaster, so SSH aliases,
 keys, agents, `ProxyJump`, and `--ssh-arg` options used to create the session

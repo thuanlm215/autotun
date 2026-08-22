@@ -416,6 +416,9 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
                     .color(MUTED)
                     .size(FONT_HEADER),
             );
+            if session.remote_apps.has_finished() && ui.small_button("Clear finished").clicked() {
+                session.remote_apps.clear_finished();
+            }
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -469,13 +472,17 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
                 }
             });
             if let Some(details) = app.status.details() {
-                ui.add(
-                    egui::Label::new(RichText::new(details).color(match app.status {
-                        RemoteAppStatus::Failed(_) => ERR_COLOR,
-                        _ => MUTED,
-                    }))
-                    .selectable(true),
-                );
+                let color = match app.status {
+                    RemoteAppStatus::Failed(_) => ERR_COLOR,
+                    _ => MUTED,
+                };
+                ui.push_id(app.id, |ui| {
+                    ui.collapsing("Details", |ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new(details).color(color)).selectable(true),
+                        );
+                    });
+                });
             }
         }
         if let Some(id) = stop {
