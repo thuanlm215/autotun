@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=autotun
+Comment=Discover and toggle SSH port forwards
+Exec=autotun-gui
+Icon=autotun
+Terminal=false
+Categories=Network;Utility;
+StartupNotify=true
+StartupWMClass=autotun-gui
+NoDisplay=true

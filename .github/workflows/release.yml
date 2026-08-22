@@ -96,9 +96,11 @@ jobs:
           mkdir -p dist/package
           install -m 0755 "target/${{ matrix.target }}/release/autotun-gui" dist/package/autotun-gui
           install -m 0644 LICENSE README.md packaging/autotun.desktop \
-            packaging/autotun.svg packaging/autotun.png dist/package/
+            packaging/autotun-gui.desktop packaging/autotun.svg packaging/autotun.png \
+            dist/package/
           tar -C dist/package -czf "dist/${archive}" \
-            autotun-gui LICENSE README.md autotun.desktop autotun.svg autotun.png
+            autotun-gui LICENSE README.md autotun.desktop autotun-gui.desktop \
+            autotun.svg autotun.png
 
       - uses: actions/upload-artifact@v6
         with:

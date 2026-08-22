@@ -84,19 +84,51 @@ StartupNotify=true
 StartupWMClass=autotun
 EOF
             fi
+            if [ ! -f "$tmp_dir/autotun-gui.desktop" ]; then
+                cat >"$tmp_dir/autotun-gui.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=autotun
+Comment=Discover and toggle SSH port forwards
+Exec=$INSTALL_DIR/autotun-gui
+Icon=autotun
+Terminal=false
+Categories=Network;Utility;
+StartupNotify=true
+StartupWMClass=autotun-gui
+NoDisplay=true
+EOF
+            fi
             # Point the launcher at this install even if PATH is incomplete.
             sed "s|^Exec=.*|Exec=$INSTALL_DIR/autotun --gui|" "$tmp_dir/autotun.desktop" \
                 >"$applications_dir/autotun.desktop"
+            # Wayland taskbars match the GUI process name when app_id is unset.
+            sed "s|^Exec=.*|Exec=$INSTALL_DIR/autotun-gui|" "$tmp_dir/autotun-gui.desktop" \
+                >"$applications_dir/autotun-gui.desktop"
             icons_home="${XDG_DATA_HOME:-$HOME/.local/share}/icons"
+            pixmaps_home="${XDG_DATA_HOME:-$HOME/.local/share}/pixmaps"
             if [ -f "$tmp_dir/autotun.svg" ]; then
                 mkdir -p "$icons_home/hicolor/scalable/apps"
                 install -m 0644 "$tmp_dir/autotun.svg" \
                     "$icons_home/hicolor/scalable/apps/autotun.svg"
             fi
             if [ -f "$tmp_dir/autotun.png" ]; then
-                mkdir -p "$icons_home/hicolor/256x256/apps"
+                mkdir -p "$icons_home/hicolor/256x256/apps" \
+                    "$icons_home/hicolor/48x48/apps" \
+                    "$pixmaps_home"
                 install -m 0644 "$tmp_dir/autotun.png" \
                     "$icons_home/hicolor/256x256/apps/autotun.png"
+                # Taskbars often look in 48x48; reuse the 256px asset.
+                install -m 0644 "$tmp_dir/autotun.png" \
+                    "$icons_home/hicolor/48x48/apps/autotun.png"
+                install -m 0644 "$tmp_dir/autotun.png" \
+                    "$pixmaps_home/autotun.png"
+            fi
+            update-desktop-database "$applications_dir" >/dev/null 2>&1 || true
+            if command -v kbuildsycoca6 >/dev/null 2>&1; then
+                kbuildsycoca6 --noincremental >/dev/null 2>&1 || true
+            elif command -v kbuildsycoca5 >/dev/null 2>&1; then
+                kbuildsycoca5 --noincremental >/dev/null 2>&1 || true
             fi
             printf 'Installed autotun GUI to %s/autotun-gui\n' "$INSTALL_DIR"
         fi

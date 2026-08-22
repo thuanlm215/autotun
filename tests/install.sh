@@ -34,8 +34,10 @@ chmod +x "$fixture/gui/autotun-gui"
 printf '%s\n' '[Desktop Entry]' 'Exec=autotun --gui' >"$fixture/gui/autotun.desktop"
 printf '<svg xmlns="http://www.w3.org/2000/svg"/>\n' >"$fixture/gui/autotun.svg"
 printf 'png\n' >"$fixture/gui/autotun.png"
+printf '%s\n' '[Desktop Entry]' 'Exec=autotun-gui' 'NoDisplay=true' \
+    >"$fixture/gui/autotun-gui.desktop"
 tar -C "$fixture/gui" -czf "$fixture/$gui_archive" \
-    autotun-gui autotun.desktop autotun.svg autotun.png
+    autotun-gui autotun.desktop autotun-gui.desktop autotun.svg autotun.png
 (cd "$fixture" && sha256sum "$archive" "$gui_archive" >SHA256SUMS)
 
 xdg="$fixture/xdg"
@@ -51,7 +53,10 @@ grep -q "Installed autotun GUI" <<<"$output"
 test -x "$fixture/install/autotun-gui"
 test "$("$fixture/install/autotun-gui")" = "autotun-gui fixture"
 grep -q "Exec=$fixture/install/autotun --gui" "$xdg/applications/autotun.desktop"
+grep -q "Exec=$fixture/install/autotun-gui" "$xdg/applications/autotun-gui.desktop"
 test -f "$xdg/icons/hicolor/scalable/apps/autotun.svg"
 test -f "$xdg/icons/hicolor/256x256/apps/autotun.png"
+test -f "$xdg/icons/hicolor/48x48/apps/autotun.png"
+test -f "$xdg/pixmaps/autotun.png"
 
 printf 'installer test passed\n'
