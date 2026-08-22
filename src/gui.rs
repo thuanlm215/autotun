@@ -375,6 +375,10 @@ impl GuiApp {
 
         ui.add_space(12.0);
         session_tabs(ui, session);
+        if session.clip_notice.is_some() {
+            ui.add_space(8.0);
+            clip_banner(ui, session);
+        }
         ui.add_space(12.0);
         match session.page {
             SessionPage::Tunnels => tunnels_panel(ui, session),
@@ -406,10 +410,6 @@ fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
         });
     });
     ui.add_space(8.0);
-    clip_banner(ui, session);
-    if session.clip_notice.is_some() {
-        ui.add_space(8.0);
-    }
 
     let mut save_form = false;
     let mut cancel_form = false;
@@ -489,20 +489,6 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
     ui.add_space(8.0);
     card().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Waypipe runs the app on the VM and shows its window on this host.")
-                    .color(MUTED)
-                    .size(FONT_HEADER),
-            );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if session.remote_apps.has_finished() && ui.small_button("Clear history").clicked()
-                {
-                    session.remote_apps.clear_finished();
-                }
-            });
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
             ui.label("Command");
             let response = ui.add(
                 egui::TextEdit::singleline(&mut session.remote_command)
@@ -520,6 +506,9 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
                     }
                     Err(error) => session.remote_app_error = Some(format!("{error:#}")),
                 }
+            }
+            if session.remote_apps.has_finished() && ui.link("Clear history").clicked() {
+                session.remote_apps.clear_finished();
             }
         });
 
