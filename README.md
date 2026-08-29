@@ -374,6 +374,10 @@ AUTOTUN_SSH_TEST=1 AUTOTUN_SSH_DEST=user@host \
   cargo test --locked --test ssh_lifecycle -- --nocapture
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on development, testing, and pull requests.
+
 ## License
 
 Licensed under the [MIT License](LICENSE).
