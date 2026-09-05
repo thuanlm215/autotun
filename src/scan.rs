@@ -4,7 +4,7 @@
 //! tunnels and returns the enable / cancel / discover actions the UI layer
 //! should apply through the SSH control socket.
 
-use crate::ports::{Direction, RemoteListener, Tunnel};
+use crate::ports::{Direction, MIN_AUTO_FORWARD_PORT, RemoteListener, Tunnel};
 
 /// Consecutive successful scans a remote listener must be absent from before
 /// its local tunnel is considered down and any active forward is cancelled.
@@ -30,8 +30,8 @@ pub enum ScanAction {
 ///
 /// Rules:
 /// - Discovered local tunnels that reappear are marked present; if
-///   `auto_forward` is on and the tunnel is not `manual_off`, it is queued
-///   for enable.
+///   `auto_forward` is on, the port is >= 1024, and the tunnel is not
+///   `manual_off`, it is queued for enable.
 /// - A listener must be missing for [`MISSING_THRESHOLD`] consecutive scans
 ///   before `present` flips false and an active forward is cancelled.
 ///   Cancellation does **not** set `manual_off` — so when the service returns
@@ -39,7 +39,7 @@ pub enum ScanAction {
 /// - Manual-off tunnels (`manual_off == true`) are never auto-enabled, even
 ///   after the remote service restarts.
 /// - New remote ports become new discovered tunnels (enabled when auto-forward
-///   is on).
+///   is on and port >= 1024).
 /// - Remote ports created by an **enabled reverse** tunnel (`-R` bind) are not
 ///   discovered or auto-forwarded back — otherwise reverse Chrome debug (etc.)
 ///   would immediately open a loop Forward → reverse echo → local again.
@@ -76,7 +76,8 @@ pub fn plan_scan(
             tunnel.present = true;
             tunnel.missing_scans = 0;
             apply_auto_label(tunnel, listener.process.as_deref());
-            if auto_forward && !tunnel.enabled && !tunnel.manual_off {
+            let can_auto_forward = auto_forward && tunnel.source_port >= MIN_AUTO_FORWARD_PORT;
+            if can_auto_forward && !tunnel.enabled && !tunnel.manual_off {
                 actions.push(ScanAction::Enable(index));
             }
         } else {
@@ -106,8 +107,9 @@ pub fn plan_scan(
             continue;
         }
         let tunnel = tunnel_from_listener(listener.clone());
+        let can_auto_forward = auto_forward && listener.port >= MIN_AUTO_FORWARD_PORT;
         actions.push(ScanAction::Discover {
-            enable: auto_forward,
+            enable: can_auto_forward,
             tunnel,
         });
     }
@@ -414,5 +416,29 @@ mod tests {
         let mut tunnels = vec![tunnel];
         let actions = plan_scan(&mut tunnels, &[listener(5800)], true);
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn ports_below_1024_are_never_auto_forwarded() {
+        let mut tunnels = Vec::new();
+        apply_scan_in_memory(
+            &mut tunnels,
+            &[
+                listener(80),
+                listener(443),
+                listener(1024),
+                listener(8080),
+            ],
+            true,
+        );
+        assert_eq!(tunnels.len(), 4);
+        assert!(!tunnels[0].enabled);
+        assert_eq!(tunnels[0].source_port, 80);
+        assert!(!tunnels[1].enabled);
+        assert_eq!(tunnels[1].source_port, 443);
+        assert!(tunnels[2].enabled);
+        assert_eq!(tunnels[2].source_port, 1024);
+        assert!(tunnels[3].enabled);
+        assert_eq!(tunnels[3].source_port, 8080);
     }
 }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use eframe::egui::{
     self, Align, Color32, CornerRadius, FontFamily, FontId, Layout, Margin, Rect, RichText, Stroke,
-    TextStyle, Vec2,
+    StrokeKind, TextStyle, Vec2,
 };
 use serde::{Deserialize, Serialize};
 
@@ -16,23 +16,9 @@ use crate::{
     remote_app::{RemoteAppManager, RemoteAppStatus},
 };
 
-const ACCENT: Color32 = Color32::from_rgb(56, 148, 156);
-const ON_COLOR: Color32 = Color32::from_rgb(86, 196, 130);
-const WARN_COLOR: Color32 = Color32::from_rgb(230, 176, 80);
-const ERR_COLOR: Color32 = Color32::from_rgb(232, 110, 110);
-const MUTED: Color32 = Color32::from_rgb(154, 160, 170);
-const CLIP_COLOR: Color32 = Color32::from_rgb(130, 196, 220);
-const CARD_FILL: Color32 = Color32::from_rgb(30, 32, 38);
-const CARD_STROKE: Color32 = Color32::from_rgb(52, 56, 64);
-const TABLE_FILL: Color32 = Color32::from_rgb(26, 28, 33);
-const ROW_HOVER: Color32 = Color32::from_rgb(40, 44, 52);
-const ROW_STRIPE: Color32 = Color32::from_rgb(30, 32, 38);
-const HEADER_FILL: Color32 = Color32::from_rgb(34, 36, 42);
-const DANGER_FILL: Color32 = Color32::from_rgb(92, 42, 46);
-const DANGER_TEXT: Color32 = Color32::from_rgb(255, 186, 186);
-const FONT_BODY: f32 = 14.5;
-const FONT_HEADER: f32 = 13.5;
-const FONT_PILL: f32 = 13.0;
+const FONT_BODY: f32 = 14.0;
+const FONT_HEADER: f32 = 13.0;
+const FONT_PILL: f32 = 12.0;
 const ROW_H: f32 = 36.0;
 const ROW_INSET: f32 = 12.0;
 const TABLE_BOTTOM_GAP: f32 = 12.0;
@@ -40,6 +26,200 @@ const AUTHOR_NAME: &str = "thuanlm215";
 const AUTHOR_URL: &str = "https://github.com/thuanlm215/autotun";
 const CONNECT_PREFS_KEY: &str = "autotun.connect-preferences";
 const APP_ICON: &[u8] = include_bytes!("../packaging/autotun.png");
+const FONT_REGULAR_BYTES: &[u8] = include_bytes!("../packaging/fonts/LiberationSans-Regular.ttf");
+const FONT_BOLD_BYTES: &[u8] = include_bytes!("../packaging/fonts/LiberationSans-Bold.ttf");
+
+fn bold_family() -> FontFamily {
+    FontFamily::Name(std::sync::Arc::from("bold"))
+}
+
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    fonts.font_data.insert(
+        "LiberationSans-Regular".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(FONT_REGULAR_BYTES)),
+    );
+    fonts.font_data.insert(
+        "LiberationSans-Bold".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(FONT_BOLD_BYTES)),
+    );
+
+    if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        prop.insert(0, "LiberationSans-Regular".to_owned());
+    }
+
+    fonts.families.insert(
+        egui::FontFamily::Name("bold".into()),
+        vec![
+            "LiberationSans-Bold".to_owned(),
+            "LiberationSans-Regular".to_owned(),
+        ],
+    );
+
+    ctx.set_fonts(fonts);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+    Auto,
+}
+
+impl ThemeMode {
+    pub fn is_dark(self, ctx: &egui::Context) -> bool {
+        match self {
+            Self::Dark => true,
+            Self::Light => false,
+            Self::Auto => match ctx.theme() {
+                egui::Theme::Light => false,
+                _ => true,
+            },
+        }
+    }
+}
+
+impl From<ThemeMode> for egui::ThemePreference {
+    fn from(mode: ThemeMode) -> Self {
+        match mode {
+            ThemeMode::Dark => egui::ThemePreference::Dark,
+            ThemeMode::Light => egui::ThemePreference::Light,
+            ThemeMode::Auto => egui::ThemePreference::System,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ThemePalette {
+    pub is_dark: bool,
+    pub panel_fill: Color32,
+    pub card_fill: Color32,
+    pub card_stroke: Color32,
+    pub table_fill: Color32,
+    pub row_stripe: Color32,
+    pub row_hover: Color32,
+    pub header_fill: Color32,
+    pub header_text: Color32,
+    pub badge_bg: Color32,
+    pub text_primary: Color32,
+    pub text_muted: Color32,
+    pub accent: Color32,
+    pub accent_hover: Color32,
+    pub danger_fill: Color32,
+    pub danger_stroke: Color32,
+    pub danger_text: Color32,
+    pub warn_color: Color32,
+    pub err_color: Color32,
+    pub on_color: Color32,
+    pub clip_color: Color32,
+}
+
+impl ThemePalette {
+    pub fn get(is_dark: bool) -> Self {
+        if is_dark {
+            Self {
+                is_dark: true,
+                panel_fill: Color32::from_rgb(15, 17, 22),
+                card_fill: Color32::from_rgb(24, 27, 34),
+                card_stroke: Color32::from_rgb(46, 54, 68),
+                table_fill: Color32::from_rgb(20, 22, 28),
+                row_stripe: Color32::from_rgb(25, 29, 37),
+                row_hover: Color32::from_rgb(34, 40, 52),
+                header_fill: Color32::from_rgb(30, 36, 46),
+                header_text: Color32::from_rgb(203, 213, 225),
+                badge_bg: Color32::from_rgb(32, 38, 48),
+                text_primary: Color32::from_rgb(241, 245, 249),
+                text_muted: Color32::from_rgb(148, 163, 184),
+                accent: Color32::from_rgb(13, 148, 136),
+                accent_hover: Color32::from_rgb(20, 184, 166),
+                danger_fill: Color32::from_rgb(64, 22, 26),
+                danger_stroke: Color32::from_rgb(153, 27, 27),
+                danger_text: Color32::from_rgb(254, 202, 202),
+                warn_color: Color32::from_rgb(250, 204, 21),
+                err_color: Color32::from_rgb(248, 113, 113),
+                on_color: Color32::from_rgb(74, 222, 128),
+                clip_color: Color32::from_rgb(56, 189, 248),
+            }
+        } else {
+            Self {
+                is_dark: false,
+                panel_fill: Color32::from_rgb(241, 245, 249),
+                card_fill: Color32::from_rgb(255, 255, 255),
+                card_stroke: Color32::from_rgb(203, 213, 225),
+                table_fill: Color32::from_rgb(255, 255, 255),
+                row_stripe: Color32::from_rgb(248, 250, 252),
+                row_hover: Color32::from_rgb(241, 245, 249),
+                header_fill: Color32::from_rgb(226, 232, 240),
+                header_text: Color32::from_rgb(30, 41, 59),
+                badge_bg: Color32::from_rgb(241, 245, 249),
+                text_primary: Color32::from_rgb(15, 23, 42),
+                text_muted: Color32::from_rgb(71, 85, 105),
+                accent: Color32::from_rgb(15, 118, 110),
+                accent_hover: Color32::from_rgb(13, 148, 136),
+                danger_fill: Color32::from_rgb(254, 226, 226),
+                danger_stroke: Color32::from_rgb(252, 165, 165),
+                danger_text: Color32::from_rgb(185, 28, 28),
+                warn_color: Color32::from_rgb(180, 83, 9),
+                err_color: Color32::from_rgb(185, 28, 28),
+                on_color: Color32::from_rgb(21, 128, 61),
+                clip_color: Color32::from_rgb(2, 110, 189),
+            }
+        }
+    }
+
+    pub fn card(&self) -> egui::Frame {
+        egui::Frame::new()
+            .fill(self.card_fill)
+            .stroke(Stroke::new(1.0_f32, self.card_stroke))
+            .corner_radius(8)
+            .inner_margin(Margin::same(16))
+    }
+
+    pub fn primary_button<'a>(&self, label: impl Into<String>) -> egui::Button<'a> {
+        egui::Button::new(
+            RichText::new(label.into())
+                .color(Color32::from_rgb(240, 253, 250))
+                .family(bold_family())
+                .size(13.0),
+        )
+        .fill(self.accent)
+        .corner_radius(6)
+    }
+
+    pub fn secondary_button<'a>(&self, label: impl Into<String>) -> egui::Button<'a> {
+        egui::Button::new(
+            RichText::new(label.into())
+                .color(self.text_primary)
+                .family(bold_family())
+                .size(13.0),
+        )
+        .fill(self.badge_bg)
+        .stroke(Stroke::new(1.0_f32, self.card_stroke))
+        .corner_radius(6)
+    }
+
+    pub fn danger_button<'a>(&self, label: impl Into<String>) -> egui::Button<'a> {
+        egui::Button::new(
+            RichText::new(label.into())
+                .color(self.danger_text)
+                .family(bold_family())
+                .size(12.5),
+        )
+        .fill(self.danger_fill)
+        .stroke(Stroke::new(1.0_f32, self.danger_stroke))
+        .corner_radius(6)
+    }
+
+    pub fn hint(&self, text: &str) -> RichText {
+        RichText::new(text).color(if self.is_dark {
+            Color32::from_rgba_unmultiplied(148, 163, 184, 140)
+        } else {
+            Color32::from_rgba_unmultiplied(100, 116, 139, 170)
+        })
+    }
+}
 
 pub fn run(cli: &Cli) -> Result<()> {
     let options = eframe::NativeOptions {
@@ -59,8 +239,13 @@ pub fn run(cli: &Cli) -> Result<()> {
         "autotun",
         options,
         Box::new(move |cc| {
-            apply_theme(&cc.egui_ctx);
-            Ok(Box::new(GuiApp::from_cli(&cli, cc.storage)))
+            setup_fonts(&cc.egui_ctx);
+            let app = GuiApp::from_cli(&cli, cc.storage);
+            cc.egui_ctx.set_theme(app.theme_mode);
+            let is_dark = app.theme_mode.is_dark(&cc.egui_ctx);
+            let theme = ThemePalette::get(is_dark);
+            apply_theme(&cc.egui_ctx, &theme);
+            Ok(Box::new(app))
         }),
     )
     .map_err(|error| anyhow::anyhow!("GUI failed: {error}"))
@@ -75,6 +260,7 @@ struct GuiApp {
     auto_forward: bool,
     connect_error: Option<String>,
     connect_icon: Option<egui::TextureHandle>,
+    theme_mode: ThemeMode,
     session: Option<SessionUi>,
 }
 
@@ -83,6 +269,8 @@ struct ConnectPreferences {
     destination: String,
     reverse_text: String,
     ssh_args_text: String,
+    #[serde(default)]
+    theme_mode: ThemeMode,
 }
 
 struct SessionUi {
@@ -162,6 +350,7 @@ impl GuiApp {
             auto_forward: !cli.no_auto_forward,
             connect_error: None,
             connect_icon: None,
+            theme_mode: saved.theme_mode,
             session: None,
         };
         if cli.destination.is_some() {
@@ -180,7 +369,7 @@ impl GuiApp {
         let interval = match self.interval_text.trim().parse::<u64>() {
             Ok(value) if value >= 1 => value,
             _ => {
-                self.connect_error = Some("Scan interval must be a number of seconds ≥ 1.".into());
+                self.connect_error = Some("Scan interval must be a number of seconds >= 1.".into());
                 return;
             }
         };
@@ -221,6 +410,11 @@ impl GuiApp {
 impl eframe::App for GuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_millis(250));
+        ctx.set_theme(self.theme_mode);
+        let is_dark = self.theme_mode.is_dark(ctx);
+        let theme = ThemePalette::get(is_dark);
+        apply_theme(ctx, &theme);
+
         if let Some(session) = &self.session {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
                 "autotun — {}",
@@ -231,14 +425,23 @@ impl eframe::App for GuiApp {
         }
         egui::TopBottomPanel::bottom("credits")
             .show_separator_line(false)
-            .frame(egui::Frame::new().inner_margin(Margin {
-                left: 16,
-                right: 20,
-                top: 4,
-                bottom: 10,
-            }))
+            .frame(
+                egui::Frame::new()
+                    .fill(theme.panel_fill)
+                    .inner_margin(Margin {
+                        left: 16,
+                        right: 20,
+                        top: 4,
+                        bottom: 8,
+                    }),
+            )
             .show(ctx, |ui| {
-                ui.vertical_centered(author_footer);
+                ui.horizontal(|ui| {
+                    author_footer(ui, &theme);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        theme_switcher(ui, &mut self.theme_mode, &theme);
+                    });
+                });
             });
         egui::CentralPanel::default()
             .frame(
@@ -251,9 +454,9 @@ impl eframe::App for GuiApp {
             )
             .show(ctx, |ui| {
                 if self.session.is_some() {
-                    self.session_ui(ui);
+                    self.session_ui(ui, &theme);
                 } else {
-                    self.connect_ui(ui);
+                    self.connect_ui(ui, &theme);
                 }
             });
     }
@@ -266,13 +469,14 @@ impl eframe::App for GuiApp {
                 destination: self.destination.clone(),
                 reverse_text: self.reverse_text.clone(),
                 ssh_args_text: self.ssh_args_text.clone(),
+                theme_mode: self.theme_mode,
             },
         );
     }
 }
 
 impl GuiApp {
-    fn connect_ui(&mut self, ui: &mut egui::Ui) {
+    fn connect_ui(&mut self, ui: &mut egui::Ui, theme: &ThemePalette) {
         let icon = self
             .connect_icon
             .get_or_insert_with(|| {
@@ -284,19 +488,24 @@ impl GuiApp {
             })
             .clone();
         ui.with_layout(Layout::top_down(Align::Center), |ui| {
-            ui.add_space(22.0);
-            ui.image((icon.id(), Vec2::splat(72.0)));
+            ui.add_space(20.0);
+            ui.image((icon.id(), Vec2::splat(60.0)));
             ui.add_space(8.0);
-            ui.heading(RichText::new("autotun").size(26.0));
+            ui.heading(
+                RichText::new("autotun")
+                    .size(24.0)
+                    .strong()
+                    .color(theme.text_primary),
+            );
             ui.label(
                 RichText::new("Connect over SSH and manage port forwards.")
-                    .color(MUTED)
-                    .size(14.5),
+                    .color(theme.text_muted)
+                    .size(13.5),
             );
-            ui.add_space(22.0);
+            ui.add_space(18.0);
 
             let inner_width = 460.0_f32.min(ui.available_width() - 8.0);
-            card().show(ui, |ui| {
+            theme.card().show(ui, |ui| {
                 ui.set_width(inner_width);
                 ui.spacing_mut().item_spacing = Vec2::new(12.0, 10.0);
                 egui::Grid::new("connect")
@@ -304,37 +513,37 @@ impl GuiApp {
                     .spacing([12.0, 10.0])
                     .min_col_width(120.0)
                     .show(ui, |ui| {
-                        ui.label("Destination");
+                        ui.label(RichText::new("Destination").strong().size(13.0));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.destination)
                                 .desired_width(f32::INFINITY)
-                                .hint_text(hint("user@host or SSH alias")),
+                                .hint_text(theme.hint("user@host or SSH alias")),
                         );
                         ui.end_row();
 
-                        ui.label("Reverse ports");
+                        ui.label(RichText::new("Reverse ports").strong().size(13.0));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.reverse_text)
                                 .desired_width(f32::INFINITY)
-                                .hint_text(hint("optional, e.g. 3000, 8080")),
+                                .hint_text(theme.hint("optional, e.g. 3000, 8080")),
                         );
                         ui.end_row();
 
-                        ui.label("Extra SSH args");
+                        ui.label(RichText::new("Extra SSH args").strong().size(13.0));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.ssh_args_text)
                                 .desired_width(f32::INFINITY)
-                                .hint_text(hint("optional, e.g. -J bastion")),
+                                .hint_text(theme.hint("optional, e.g. -J bastion")),
                         );
                         ui.end_row();
 
-                        ui.label("Scan interval");
+                        ui.label(RichText::new("Scan interval").strong().size(13.0));
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.interval_text)
                                     .desired_width(64.0),
                             );
-                            ui.label(RichText::new("seconds").color(MUTED));
+                            ui.label(RichText::new("seconds").color(theme.text_muted));
                         });
                         ui.end_row();
                     });
@@ -353,20 +562,20 @@ impl GuiApp {
                 });
                 ui.add_space(14.0);
                 if ui
-                    .add_sized([inner_width, 34.0], primary_button("Connect"))
+                    .add_sized([inner_width, 34.0], theme.primary_button("Connect"))
                     .clicked()
                 {
                     self.try_connect();
                 }
                 if let Some(error) = &self.connect_error {
                     ui.add_space(8.0);
-                    ui.colored_label(ERR_COLOR, error);
+                    ui.colored_label(theme.err_color, error);
                 }
             });
         });
     }
 
-    fn session_ui(&mut self, ui: &mut egui::Ui) {
+    fn session_ui(&mut self, ui: &mut egui::Ui, theme: &ThemePalette) {
         let mut disconnect = false;
         {
             let Some(session) = self.session.as_mut() else {
@@ -374,7 +583,7 @@ impl GuiApp {
             };
             session.engine.poll();
             session.remote_apps.poll();
-            header_bar(ui, session, &mut disconnect);
+            header_bar(ui, session, &mut disconnect, theme);
             if disconnect {
                 session.remote_apps.stop_all();
                 session.engine.shutdown();
@@ -389,37 +598,48 @@ impl GuiApp {
         };
 
         ui.add_space(12.0);
-        session_tabs(ui, session);
+        session_tabs(ui, session, theme);
         if session.clip_notice.is_some() {
             ui.add_space(8.0);
-            clip_banner(ui, session);
+            clip_banner(ui, session, theme);
         }
         ui.add_space(12.0);
         match session.page {
-            SessionPage::Tunnels => tunnels_panel(ui, session),
-            SessionPage::RemoteApps => remote_apps_panel(ui, session),
+            SessionPage::Tunnels => tunnels_panel(ui, session, theme),
+            SessionPage::RemoteApps => remote_apps_panel(ui, session, theme),
         }
     }
 }
 
-fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
+fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
     ui.horizontal(|ui| {
-        ui.heading("Tunnels");
-        ui.label(
-            RichText::new("Manage forwarded and reverse ports.")
-                .color(MUTED)
-                .size(FONT_HEADER),
-        );
+        ui.vertical(|ui| {
+            ui.heading(
+                RichText::new("Tunnels")
+                    .strong()
+                    .color(theme.text_primary)
+                    .size(18.0),
+            );
+            ui.label(
+                RichText::new("Manage forwarded and reverse ports.")
+                    .color(theme.text_muted)
+                    .size(12.5),
+            );
+        });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.add(primary_button("Forward")).clicked() {
+            if ui.add(theme.primary_button("+ Forward")).clicked() {
                 session.form = Some(FormUi::new(Direction::Local));
                 session.form_error = None;
             }
-            if ui.button("Reverse").clicked() {
+            if ui.add(theme.secondary_button("+ Reverse")).clicked() {
                 session.form = Some(FormUi::new(Direction::Reverse));
                 session.form_error = None;
             }
-            if ui.button("Rescan").clicked() {
+            if ui
+                .add(theme.secondary_button("Rescan"))
+                .on_hover_text("Query remote host for new listening ports")
+                .clicked()
+            {
                 session.engine.rescan();
             }
         });
@@ -429,7 +649,7 @@ fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
     let mut save_form = false;
     let mut cancel_form = false;
     if let Some(form) = session.form.as_mut() {
-        card().show(ui, |ui| {
+        theme.card().show(ui, |ui| {
             ui.label(RichText::new(&form.title).strong());
             ui.add_space(6.0);
             let (source_label, requested_label) = match form.direction {
@@ -444,19 +664,19 @@ fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
                 ui.add(
                     egui::TextEdit::singleline(&mut form.requested)
                         .desired_width(80.0)
-                        .hint_text(hint("same")),
+                        .hint_text(theme.hint("same")),
                 );
                 ui.add_space(8.0);
                 ui.label("Label");
                 ui.add(egui::TextEdit::singleline(&mut form.label).desired_width(140.0));
                 ui.add_space(8.0);
-                save_form = ui.add(primary_button("Save")).clicked();
+                save_form = ui.add(theme.primary_button("Save")).clicked();
                 cancel_form = ui.button("Cancel").clicked();
             });
         });
         if let Some(error) = &session.form_error {
             ui.add_space(6.0);
-            ui.colored_label(ERR_COLOR, error);
+            ui.colored_label(theme.err_color, error);
         }
         ui.add_space(8.0);
     }
@@ -489,28 +709,35 @@ fn tunnels_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
         .filter(|(_, tunnel)| tunnel_matches(tunnel, &filter))
         .map(|(index, _)| index)
         .collect();
-    tunnel_table(ui, session, &visible);
+    tunnel_table(ui, session, &visible, theme);
 }
 
-fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
+fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
     ui.horizontal(|ui| {
-        ui.heading("Remote Apps");
-        ui.label(
-            RichText::new("Launch a Wayland app on the VM through Waypipe.")
-                .color(MUTED)
-                .size(FONT_HEADER),
-        );
+        ui.vertical(|ui| {
+            ui.heading(
+                RichText::new("Remote Apps")
+                    .strong()
+                    .color(theme.text_primary)
+                    .size(18.0),
+            );
+            ui.label(
+                RichText::new("Launch a Wayland app on the VM through Waypipe.")
+                    .color(theme.text_muted)
+                    .size(12.5),
+            );
+        });
     });
     ui.add_space(8.0);
-    card().show(ui, |ui| {
+    theme.card().show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Command");
+            ui.label(RichText::new("Command").strong().size(13.0));
             let response = ui.add(
                 egui::TextEdit::singleline(&mut session.remote_command)
-                    .desired_width(360.0)
-                    .hint_text(hint("e.g. firefox --new-instance")),
+                    .desired_width(340.0)
+                    .hint_text(theme.hint("e.g. firefox --new-instance")),
             );
-            let launch = ui.add(primary_button("Launch")).clicked()
+            let launch = ui.add(theme.primary_button("Launch")).clicked()
                 || (response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)));
             if launch {
                 let control = session.engine.ssh_control();
@@ -527,36 +754,85 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
             }
         });
 
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Presets:").color(theme.text_muted).size(12.0));
+            let presets = [
+                ("Firefox", "firefox --new-instance"),
+                ("Files", "nautilus"),
+                ("Gedit", "gedit"),
+                ("Terminal", "kitty"),
+            ];
+            for (title, cmd) in presets {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new(title)
+                                .size(11.5)
+                                .color(theme.text_primary),
+                        )
+                        .fill(theme.badge_bg)
+                        .corner_radius(4),
+                    )
+                    .on_hover_text(format!("Fill command: {cmd}"))
+                    .clicked()
+                {
+                    session.remote_command = cmd.to_owned();
+                }
+            }
+        });
+
         if let Some(error) = &session.remote_app_error {
-            ui.colored_label(ERR_COLOR, error);
+            ui.add_space(6.0);
+            ui.colored_label(theme.err_color, error);
         }
 
         let apps = session.remote_apps.apps();
         if apps.is_empty() {
-            ui.label(
-                RichText::new("Requires a local Wayland session and waypipe on both host and VM.")
-                    .color(MUTED)
-                    .size(FONT_HEADER),
-            );
+            ui.add_space(14.0);
+            ui.vertical_centered(|ui| {
+                ui.label(
+                    RichText::new("No remote applications launched yet")
+                        .color(theme.text_primary)
+                        .size(13.5),
+                );
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Requires a local Wayland session and waypipe installed on both host and VM.")
+                        .color(theme.text_muted)
+                        .size(12.0),
+                );
+            });
             return;
         }
         ui.add_space(5.0);
         let mut stop = None;
         for app in apps {
-            let color = remote_app_status_color(&app.status);
+            let (status_label, status_kind, details) = match &app.status {
+                RemoteAppStatus::Starting => ("Starting", StatusKind::Warn, app.status.details()),
+                RemoteAppStatus::Running => ("Running", StatusKind::On, app.status.details()),
+                RemoteAppStatus::Exited(_) => ("Exited", StatusKind::Off, app.status.details()),
+                RemoteAppStatus::Failed(_) => ("Failed", StatusKind::Error, app.status.details()),
+            };
             ui.horizontal(|ui| {
                 ui.monospace(&app.command);
-                status_pill(ui, app.status.label(), color);
+                status_pill(ui, status_label, theme, status_kind, details);
                 if app.status.can_stop() && ui.button("Stop").clicked() {
                     stop = Some(app.id);
                 }
             });
             if let Some(details) = app.status.details() {
-                ui.label(RichText::new(remote_app_summary(details)).color(color));
+                let detail_color = match status_kind {
+                    StatusKind::Error => theme.err_color,
+                    StatusKind::Warn => theme.warn_color,
+                    StatusKind::On => theme.on_color,
+                    StatusKind::Off => theme.text_muted,
+                };
+                ui.label(RichText::new(remote_app_summary(details)).color(detail_color));
                 ui.push_id(app.id, |ui| {
                     ui.collapsing("Details", |ui| {
                         ui.add(
-                            egui::Label::new(RichText::new(details).color(color)).selectable(true),
+                            egui::Label::new(RichText::new(details).color(detail_color)).selectable(true),
                         );
                     });
                 });
@@ -568,21 +844,109 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi) {
     });
 }
 
-fn session_tabs(ui: &mut egui::Ui, session: &mut SessionUi) {
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut session.page, SessionPage::Tunnels, "Tunnels");
-        ui.selectable_value(&mut session.page, SessionPage::RemoteApps, "Remote Apps");
-    });
+fn session_tabs(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
+    let active_tunnels = session
+        .engine
+        .tunnels()
+        .iter()
+        .filter(|t| t.enabled)
+        .count();
+    let total_tunnels = session.engine.tunnels().len();
+    let running_apps = session
+        .remote_apps
+        .apps()
+        .iter()
+        .filter(|a| matches!(a.status, RemoteAppStatus::Running))
+        .count();
+
+    let tab_bg = if theme.is_dark {
+        Color32::from_rgb(18, 20, 26)
+    } else {
+        Color32::from_rgb(235, 240, 246)
+    };
+    egui::Frame::new()
+        .fill(tab_bg)
+        .stroke(Stroke::new(1.0_f32, theme.card_stroke))
+        .corner_radius(7)
+        .inner_margin(Margin::symmetric(3, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let tunnels_selected = session.page == SessionPage::Tunnels;
+                let (fill, stroke, text_color) = if tunnels_selected {
+                    if theme.is_dark {
+                        (
+                            Color32::from_rgb(38, 46, 60),
+                            Stroke::new(1.0_f32, Color32::from_rgb(64, 76, 96)),
+                            Color32::WHITE,
+                        )
+                    } else {
+                        (
+                            Color32::WHITE,
+                            Stroke::new(1.0_f32, theme.card_stroke),
+                            theme.text_primary,
+                        )
+                    }
+                } else {
+                    (Color32::TRANSPARENT, Stroke::NONE, theme.text_muted)
+                };
+                let tunnels_title = format!("Tunnels ({active_tunnels}/{total_tunnels})");
+                let resp = ui.add(
+                    egui::Button::new(
+                        RichText::new(tunnels_title)
+                            .color(text_color)
+                            .family(bold_family())
+                            .size(13.0),
+                    )
+                    .fill(fill)
+                    .stroke(stroke)
+                    .corner_radius(5),
+                );
+                if resp.clicked() {
+                    session.page = SessionPage::Tunnels;
+                }
+
+                let apps_selected = session.page == SessionPage::RemoteApps;
+                let (fill, stroke, text_color) = if apps_selected {
+                    if theme.is_dark {
+                        (
+                            Color32::from_rgb(38, 46, 60),
+                            Stroke::new(1.0_f32, Color32::from_rgb(64, 76, 96)),
+                            Color32::WHITE,
+                        )
+                    } else {
+                        (
+                            Color32::WHITE,
+                            Stroke::new(1.0_f32, theme.card_stroke),
+                            theme.text_primary,
+                        )
+                    }
+                } else {
+                    (Color32::TRANSPARENT, Stroke::NONE, theme.text_muted)
+                };
+                let apps_title = if running_apps > 0 {
+                    format!("Remote Apps ({running_apps})")
+                } else {
+                    "Remote Apps".into()
+                };
+                let resp = ui.add(
+                    egui::Button::new(
+                        RichText::new(apps_title)
+                            .color(text_color)
+                            .family(bold_family())
+                            .size(13.0),
+                    )
+                    .fill(fill)
+                    .stroke(stroke)
+                    .corner_radius(5),
+                );
+                if resp.clicked() {
+                    session.page = SessionPage::RemoteApps;
+                }
+            });
+        });
 }
 
-fn remote_app_status_color(status: &RemoteAppStatus) -> Color32 {
-    match status {
-        RemoteAppStatus::Starting => WARN_COLOR,
-        RemoteAppStatus::Running => ON_COLOR,
-        RemoteAppStatus::Exited(_) => MUTED,
-        RemoteAppStatus::Failed(_) => ERR_COLOR,
-    }
-}
 
 fn remote_app_summary(details: &str) -> String {
     let preferred = [
@@ -597,39 +961,60 @@ fn remote_app_summary(details: &str) -> String {
     .trim();
     const LIMIT: usize = 112;
     if preferred.chars().count() > LIMIT {
-        format!("{}…", preferred.chars().take(LIMIT - 1).collect::<String>())
+        format!("{}...", preferred.chars().take(LIMIT - 3).collect::<String>())
     } else {
         preferred.to_owned()
     }
 }
 
-fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool) {
+fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool, theme: &ThemePalette) {
     ui.horizontal(|ui| {
-        ui.heading("autotun");
-        ui.add_space(6.0);
-        ui.label(
-            RichText::new(session.engine.destination())
-                .strong()
-                .size(16.0),
+        ui.heading(
+            RichText::new("autotun")
+                .family(bold_family())
+                .color(theme.text_primary)
+                .size(20.0),
         );
-        if session.engine.connected() {
-            status_dot(ui, ON_COLOR, "connected");
-        } else {
-            status_dot(ui, WARN_COLOR, "reconnecting");
-        }
+        ui.add_space(8.0);
+        egui::Frame::new()
+            .fill(theme.badge_bg)
+            .stroke(Stroke::new(1.0_f32, theme.card_stroke))
+            .corner_radius(6)
+            .inner_margin(Margin::symmetric(9, 3))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(
+                        RichText::new(session.engine.destination())
+                            .family(bold_family())
+                            .color(theme.text_primary)
+                            .size(13.5),
+                    );
+                    let (dot_color, text) = if session.engine.connected() {
+                        (theme.on_color, "connected")
+                    } else {
+                        (theme.warn_color, "reconnecting")
+                    };
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 3.0, dot_color);
+                    ui.label(
+                        RichText::new(text)
+                            .family(bold_family())
+                            .color(dot_color)
+                            .size(12.0),
+                    );
+                });
+            });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui
-                .add(
-                    egui::Button::new(RichText::new("Disconnect").color(DANGER_TEXT))
-                        .fill(DANGER_FILL),
-                )
+                .add(theme.danger_button("Disconnect"))
                 .clicked()
             {
                 *disconnect = true;
             }
             if ui
-                .button("Send screenshot")
-                .on_hover_text("Upload the clipboard PNG to the remote host")
+                .add(theme.secondary_button("Send Image"))
+                .on_hover_text("Upload clipboard image to remote host (copies path for CLI)")
                 .clicked()
             {
                 match session.engine.push_clipboard_image() {
@@ -643,7 +1028,7 @@ fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool)
     });
 }
 
-fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi) {
+fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
     let filter = session.filter.to_lowercase();
     let total = session.engine.tunnels().len();
     let shown = session
@@ -653,17 +1038,33 @@ fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi) {
         .filter(|tunnel| tunnel_matches(tunnel, &filter))
         .count();
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Filter").color(MUTED).size(FONT_HEADER));
         ui.add(
             egui::TextEdit::singleline(&mut session.filter)
-                .desired_width(280.0)
-                .hint_text(hint("label or port")),
+                .desired_width(240.0)
+                .hint_text(theme.hint("Search port or label...")),
         );
-        ui.label(
-            RichText::new(format!("{shown} / {total}"))
-                .color(MUTED)
-                .size(FONT_HEADER),
-        );
+        if !session.filter.is_empty()
+            && ui
+                .small_button("×")
+                .on_hover_text("Clear filter")
+                .clicked()
+        {
+            session.filter.clear();
+        }
+        ui.add_space(4.0);
+        egui::Frame::new()
+            .fill(theme.badge_bg)
+            .stroke(Stroke::new(1.0_f32, theme.card_stroke))
+            .corner_radius(4)
+            .inner_margin(Margin::symmetric(6, 2))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(format!("{shown} / {total}"))
+                        .color(theme.text_muted)
+                        .size(12.0)
+                        .family(bold_family()),
+                );
+            });
     });
 }
 
@@ -677,8 +1078,8 @@ impl FormUi {
     fn new(direction: Direction) -> Self {
         Self {
             title: match direction {
-                Direction::Local => "Add forward (remote → local)".into(),
-                Direction::Reverse => "Add reverse (local → remote)".into(),
+                Direction::Local => "Add forward (remote -> local)".into(),
+                Direction::Reverse => "Add reverse (local -> remote)".into(),
             },
             direction,
             source: String::new(),
@@ -692,8 +1093,8 @@ impl FormUi {
     fn edit(tunnel: &crate::ports::Tunnel, index: usize) -> Self {
         Self {
             title: match tunnel.direction {
-                Direction::Local => "Edit forward (remote → local)".into(),
-                Direction::Reverse => "Edit reverse (local → remote)".into(),
+                Direction::Local => "Edit forward (remote -> local)".into(),
+                Direction::Reverse => "Edit reverse (local -> remote)".into(),
             },
             direction: tunnel.direction,
             source: tunnel.source_port.to_string(),
@@ -729,11 +1130,11 @@ fn parse_ssh_args(text: &str) -> Vec<String> {
     }
 }
 
-fn apply_theme(ctx: &egui::Context) {
+fn apply_theme(ctx: &egui::Context, theme: &ThemePalette) {
     let mut style = (*ctx.style()).clone();
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
-    style.spacing.button_padding = Vec2::new(10.0, 6.0);
-    style.spacing.interact_size.y = 26.0;
+    style.spacing.button_padding = Vec2::new(10.0, 5.0);
+    style.spacing.interact_size.y = 28.0;
     style.text_styles.insert(
         TextStyle::Small,
         FontId::new(12.0, FontFamily::Proportional),
@@ -744,55 +1145,63 @@ fn apply_theme(ctx: &egui::Context) {
     );
     style.text_styles.insert(
         TextStyle::Button,
-        FontId::new(14.0, FontFamily::Proportional),
+        FontId::new(13.5, bold_family()),
     );
     style.text_styles.insert(
         TextStyle::Heading,
-        FontId::new(22.0, FontFamily::Proportional),
+        FontId::new(20.0, bold_family()),
     );
     style.text_styles.insert(
         TextStyle::Monospace,
-        FontId::new(14.0, FontFamily::Monospace),
+        FontId::new(13.5, FontFamily::Monospace),
     );
 
-    let mut visuals = egui::Visuals::dark();
-    visuals.override_text_color = Some(Color32::from_rgb(214, 218, 224));
-    visuals.hyperlink_color = Color32::from_rgb(122, 186, 232);
-    visuals.warn_fg_color = WARN_COLOR;
-    visuals.error_fg_color = ERR_COLOR;
-    visuals.panel_fill = Color32::from_rgb(22, 24, 28);
-    visuals.window_fill = CARD_FILL;
-    visuals.extreme_bg_color = Color32::from_rgb(16, 17, 21);
-    visuals.faint_bg_color = ROW_STRIPE;
-    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(5);
-    visuals.widgets.inactive.corner_radius = CornerRadius::same(5);
-    visuals.widgets.hovered.corner_radius = CornerRadius::same(5);
-    visuals.widgets.active.corner_radius = CornerRadius::same(5);
-    visuals.widgets.open.corner_radius = CornerRadius::same(5);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(48, 52, 60);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(64, 70, 80);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(56, 62, 72);
-    visuals.selection.bg_fill = Color32::from_rgb(38, 110, 122);
-    visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(110, 196, 204));
+    let mut visuals = if theme.is_dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    visuals.override_text_color = Some(theme.text_primary);
+    visuals.hyperlink_color = theme.clip_color;
+    visuals.warn_fg_color = theme.warn_color;
+    visuals.error_fg_color = theme.err_color;
+    visuals.panel_fill = theme.panel_fill;
+    visuals.window_fill = theme.card_fill;
+    visuals.extreme_bg_color = if theme.is_dark {
+        Color32::from_rgb(12, 14, 18)
+    } else {
+        Color32::from_rgb(241, 245, 249)
+    };
+    visuals.faint_bg_color = theme.row_stripe;
+    visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
+    visuals.widgets.inactive.corner_radius = CornerRadius::same(6);
+    visuals.widgets.hovered.corner_radius = CornerRadius::same(6);
+    visuals.widgets.active.corner_radius = CornerRadius::same(6);
+    visuals.widgets.open.corner_radius = CornerRadius::same(6);
+
+    if theme.is_dark {
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, theme.card_stroke);
+        visuals.widgets.inactive.bg_fill = Color32::from_rgb(30, 35, 45);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, theme.card_stroke);
+        visuals.widgets.hovered.bg_fill = Color32::from_rgb(42, 48, 62);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, theme.accent);
+        visuals.widgets.active.bg_fill = Color32::from_rgb(48, 56, 72);
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, theme.accent);
+        visuals.selection.bg_fill = Color32::from_rgb(15, 76, 92);
+        visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(56, 189, 248));
+    } else {
+        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, theme.card_stroke);
+        visuals.widgets.inactive.bg_fill = Color32::from_rgb(241, 245, 249);
+        visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, theme.card_stroke);
+        visuals.widgets.hovered.bg_fill = Color32::from_rgb(230, 236, 244);
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, theme.accent);
+        visuals.widgets.active.bg_fill = Color32::from_rgb(220, 228, 238);
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, theme.accent);
+        visuals.selection.bg_fill = Color32::from_rgb(204, 251, 241);
+        visuals.selection.stroke = Stroke::new(1.0_f32, theme.accent);
+    }
     style.visuals = visuals;
     ctx.set_style(style);
-}
-
-fn card() -> egui::Frame {
-    egui::Frame::new()
-        .fill(CARD_FILL)
-        .stroke(Stroke::new(1.0_f32, CARD_STROKE))
-        .corner_radius(8)
-        .inner_margin(Margin::same(16))
-}
-
-fn primary_button(label: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(label.to_owned()).color(Color32::from_rgb(240, 248, 248)))
-        .fill(ACCENT)
-}
-
-fn hint(text: &str) -> RichText {
-    RichText::new(text).color(Color32::from_rgba_unmultiplied(214, 218, 224, 100))
 }
 
 fn app_icon_image() -> egui::ColorImage {
@@ -804,65 +1213,155 @@ fn app_icon_image() -> egui::ColorImage {
     )
 }
 
-fn author_footer(ui: &mut egui::Ui) {
+fn author_footer(ui: &mut egui::Ui, theme: &ThemePalette) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(RichText::new("by").color(MUTED).size(13.0));
+        ui.label(RichText::new("by").color(theme.text_muted).size(12.0));
         ui.hyperlink_to(
-            RichText::new(AUTHOR_NAME).color(CLIP_COLOR).size(13.0),
+            RichText::new(AUTHOR_NAME).color(theme.clip_color).size(12.0),
             AUTHOR_URL,
+        );
+        ui.label(RichText::new("•").color(theme.card_stroke).size(12.0));
+        ui.label(
+            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                .color(theme.text_muted)
+                .size(12.0),
         );
     });
 }
 
-fn status_dot(ui: &mut egui::Ui, color: Color32, text: &str) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        let (rect, _) = ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
-        ui.painter().circle_filled(rect.center(), 3.5, color);
-        ui.label(RichText::new(text).color(color));
-    });
+fn theme_switcher(ui: &mut egui::Ui, theme_mode: &mut ThemeMode, theme: &ThemePalette) {
+    egui::Frame::new()
+        .fill(if theme.is_dark {
+            Color32::from_rgb(22, 25, 32)
+        } else {
+            Color32::from_rgb(229, 231, 235)
+        })
+        .stroke(Stroke::new(1.0_f32, theme.card_stroke))
+        .corner_radius(6)
+        .inner_margin(Margin::symmetric(3, 2))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                for (mode, label) in [
+                    (ThemeMode::Dark, "Dark"),
+                    (ThemeMode::Light, "Light"),
+                    (ThemeMode::Auto, "Auto"),
+                ] {
+                    let selected = *theme_mode == mode;
+                    let (fill, text_color) = if selected {
+                        (theme.accent, Color32::from_rgb(240, 253, 250))
+                    } else {
+                        (Color32::TRANSPARENT, theme.text_muted)
+                    };
+                    let btn = egui::Button::new(
+                        RichText::new(label)
+                            .size(11.5)
+                            .color(text_color)
+                            .strong(),
+                    )
+                    .fill(fill)
+                    .corner_radius(4);
+                    if ui
+                        .add(btn)
+                        .on_hover_text(match mode {
+                            ThemeMode::Dark => "Always use dark theme",
+                            ThemeMode::Light => "Always use light theme",
+                            ThemeMode::Auto => "Sync with system theme preference",
+                        })
+                        .clicked()
+                    {
+                        *theme_mode = mode;
+                    }
+                }
+            });
+        });
 }
 
-fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi) {
+
+fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
     let Some(notice) = &session.clip_notice else {
         return;
     };
-    let (fill, stroke) = match notice {
-        ClipNotice::Success(_) => (
-            Color32::from_rgb(28, 42, 48),
-            Color32::from_rgb(48, 90, 104),
-        ),
-        ClipNotice::Error(_) => (
-            Color32::from_rgb(48, 30, 32),
-            Color32::from_rgb(110, 56, 58),
-        ),
+    let (fill, stroke, tag, tag_bg, text_color) = match notice {
+        ClipNotice::Success(_) => if theme.is_dark {
+            (
+                Color32::from_rgb(20, 34, 42),
+                Color32::from_rgb(38, 86, 108),
+                "COPIED",
+                Color32::from_rgb(14, 116, 144),
+                theme.clip_color,
+            )
+        } else {
+            (
+                Color32::from_rgb(240, 249, 255),
+                Color32::from_rgb(186, 230, 253),
+                "COPIED",
+                Color32::from_rgb(2, 132, 199),
+                Color32::from_rgb(3, 105, 161),
+            )
+        },
+        ClipNotice::Error(_) => if theme.is_dark {
+            (
+                Color32::from_rgb(44, 22, 26),
+                Color32::from_rgb(118, 44, 52),
+                "ERROR",
+                Color32::from_rgb(185, 28, 28),
+                theme.err_color,
+            )
+        } else {
+            (
+                Color32::from_rgb(254, 242, 242),
+                Color32::from_rgb(254, 202, 202),
+                "ERROR",
+                Color32::from_rgb(220, 38, 38),
+                Color32::from_rgb(185, 28, 28),
+            )
+        },
     };
     let mut dismiss = false;
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(1.0_f32, stroke))
         .corner_radius(6)
-        .inner_margin(Margin::symmetric(10, 6))
+        .inner_margin(Margin::symmetric(10, 5))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                egui::Frame::new()
+                    .fill(tag_bg)
+                    .corner_radius(4)
+                    .inner_margin(Margin::symmetric(6, 2))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(tag)
+                                .color(Color32::WHITE)
+                                .size(11.0)
+                                .strong(),
+                        );
+                    });
                 match notice {
                     ClipNotice::Success(path) => {
                         ui.add(
                             egui::Label::new(
-                                RichText::new(format!("{path}  (copied — paste in the AI CLI)"))
-                                    .color(CLIP_COLOR)
-                                    .monospace(),
+                                RichText::new(path)
+                                    .color(text_color)
+                                    .monospace()
+                                    .size(13.0),
                             )
                             .selectable(true),
                         );
-                        if ui.small_button("Copy").clicked() {
+                        ui.label(
+                            RichText::new("(copied — paste in AI CLI)")
+                                .color(theme.text_muted)
+                                .size(12.0),
+                        );
+                        if ui.small_button("Copy again").clicked() {
                             ui.ctx().copy_text(path.clone());
                         }
                     }
                     ClipNotice::Error(error) => {
                         ui.add(
-                            egui::Label::new(RichText::new(error).color(ERR_COLOR))
+                            egui::Label::new(RichText::new(error).color(theme.err_color).size(13.0))
                                 .selectable(true),
                         );
                     }
@@ -879,11 +1378,11 @@ fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi) {
     }
 }
 
-fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
+fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], theme: &ThemePalette) {
     let remaining = ui.available_height();
     egui::Frame::new()
-        .fill(TABLE_FILL)
-        .stroke(Stroke::new(1.0_f32, CARD_STROKE))
+        .fill(theme.table_fill)
+        .stroke(Stroke::new(1.0_f32, theme.card_stroke))
         .corner_radius(8)
         .inner_margin(Margin::same(10))
         .outer_margin(Margin {
@@ -894,10 +1393,10 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
         })
         .show(ui, |ui| {
             ui.set_min_height((remaining - TABLE_BOTTOM_GAP - 8.0).max(140.0));
-            filter_bar(ui, session);
+            filter_bar(ui, session, theme);
             ui.add_space(6.0);
             let widths = col_widths(ui.available_width());
-            header_row(ui, &widths);
+            header_row(ui, &widths, theme);
             ui.add_space(4.0);
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
@@ -910,22 +1409,17 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
                             } else {
                                 "No tunnels match this filter"
                             };
-                            ui.label(RichText::new(empty).color(MUTED));
+                            ui.label(RichText::new(empty).color(theme.text_muted));
                         });
                         return;
                     }
                     let mut action = None::<RowAction>;
                     for (row_i, &index) in visible.iter().enumerate() {
                         let tunnel = &session.engine.tunnels()[index];
-                        paint_row_bg(ui, row_i);
+                        paint_row_bg(ui, row_i, theme);
                         ui.horizontal(|ui| {
                             ui.set_height(ROW_H);
                             ui.add_space(ROW_INSET);
-                            let direction = if tunnel.direction == Direction::Local {
-                                "Forward"
-                            } else {
-                                "Reverse"
-                            };
                             let (remote, local) = match tunnel.direction {
                                 Direction::Local => (
                                     tunnel.source_port.to_string(),
@@ -942,7 +1436,7 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
                                     tunnel.source_port.to_string(),
                                 ),
                             };
-                            let (status, status_color) = tunnel_status(tunnel);
+                            let status = tunnel_status(tunnel);
                             let url = engine::tunnel_url(tunnel);
                             let label = if tunnel.label.is_empty() {
                                 "—"
@@ -951,44 +1445,115 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
                             };
 
                             cell(ui, widths[0], |ui| {
-                                ui.label(direction);
+                                direction_pill(ui, tunnel.direction, theme);
                             });
                             cell(ui, widths[1], |ui| {
-                                ui.label(label);
+                                if label == "—" {
+                                    ui.label(RichText::new("—").color(theme.text_muted));
+                                } else {
+                                    ui.label(
+                                        RichText::new(label)
+                                            .color(theme.text_primary)
+                                            .size(13.5),
+                                    );
+                                }
                             });
                             cell(ui, widths[2], |ui| {
-                                ui.monospace(remote);
+                                ui.monospace(
+                                    RichText::new(remote)
+                                        .color(theme.text_primary)
+                                        .family(bold_family())
+                                        .size(13.0),
+                                );
                             });
                             cell(ui, widths[3], |ui| {
-                                ui.monospace(local);
+                                ui.monospace(
+                                    RichText::new(local)
+                                        .color(theme.text_primary)
+                                        .family(bold_family())
+                                        .size(13.0),
+                                );
                             });
                             cell(ui, widths[4], |ui| {
                                 if url == "—" {
-                                    ui.label(RichText::new("—").color(MUTED));
-                                } else if ui.link(&url).clicked() {
-                                    let _ =
-                                        std::process::Command::new("xdg-open").arg(&url).spawn();
+                                    ui.label(RichText::new("—").color(theme.text_muted));
+                                } else if ui
+                                    .add(
+                                        egui::Link::new(
+                                            RichText::new(&url)
+                                                .color(theme.clip_color)
+                                                .size(13.0),
+                                        ),
+                                    )
+                                    .on_hover_text("Open in browser")
+                                    .clicked()
+                                {
+                                    let _ = std::process::Command::new("xdg-open")
+                                        .arg(&url)
+                                        .spawn();
                                 }
                             });
                             cell(ui, widths[5], |ui| {
-                                status_pill(ui, &status, status_color);
+                                status_pill(ui, status.label, theme, status.kind, status.tooltip);
                             });
                             cell(ui, widths[6], |ui| {
-                                ui.spacing_mut().item_spacing.x = 6.0;
-                                let toggle_label = if tunnel.enabled { "Off" } else { "On" };
-                                if ui.button(toggle_label).clicked() {
+                                ui.spacing_mut().item_spacing.x = 5.0;
+                                let (toggle_label, toggle_fill, toggle_stroke, toggle_fg) = if tunnel.enabled {
+                                    (
+                                        "Off",
+                                        theme.badge_bg,
+                                        Stroke::new(1.0_f32, theme.card_stroke),
+                                        theme.text_muted,
+                                    )
+                                } else if theme.is_dark {
+                                    (
+                                        "On",
+                                        Color32::from_rgb(20, 50, 32),
+                                        Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)),
+                                        Color32::from_rgb(74, 222, 128),
+                                    )
+                                } else {
+                                    (
+                                        "On",
+                                        Color32::from_rgb(220, 252, 231),
+                                        Stroke::new(1.0_f32, Color32::from_rgb(74, 222, 128)),
+                                        Color32::from_rgb(21, 128, 61),
+                                    )
+                                };
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(toggle_label)
+                                                .color(toggle_fg)
+                                                .family(bold_family())
+                                                .size(12.5),
+                                        )
+                                        .fill(toggle_fill)
+                                        .stroke(toggle_stroke)
+                                        .corner_radius(5),
+                                    )
+                                    .clicked()
+                                {
                                     action = Some(RowAction::Toggle(index));
-                                }
-                                if ui.button("Edit").clicked() {
-                                    action = Some(RowAction::Edit(index));
                                 }
                                 if ui
                                     .add(
                                         egui::Button::new(
-                                            RichText::new("Remove").color(DANGER_TEXT),
+                                            RichText::new("Edit")
+                                                .color(theme.text_primary)
+                                                .family(bold_family())
+                                                .size(12.5),
                                         )
-                                        .fill(DANGER_FILL),
+                                        .fill(theme.badge_bg)
+                                        .stroke(Stroke::new(1.0_f32, theme.card_stroke))
+                                        .corner_radius(5),
                                     )
+                                    .clicked()
+                                {
+                                    action = Some(RowAction::Edit(index));
+                                }
+                                if ui
+                                    .add(theme.danger_button("Remove"))
                                     .clicked()
                                 {
                                     action = Some(RowAction::Delete(index));
@@ -1010,10 +1575,66 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize]) {
         });
 }
 
-fn header_row(ui: &mut egui::Ui, widths: &[f32; 7]) {
+fn direction_pill(ui: &mut egui::Ui, direction: Direction, theme: &ThemePalette) {
+    let (text, bg, stroke_color, fg, tooltip) = match direction {
+        Direction::Local => if theme.is_dark {
+            (
+                "Local",
+                Color32::from_rgb(14, 38, 54),
+                Color32::from_rgb(2, 132, 199),
+                Color32::from_rgb(56, 189, 248),
+                "Local forward (remote -> local)",
+            )
+        } else {
+            (
+                "Local",
+                Color32::from_rgb(224, 242, 254),
+                Color32::from_rgb(56, 189, 248),
+                Color32::from_rgb(3, 105, 161),
+                "Local forward (remote -> local)",
+            )
+        },
+        Direction::Reverse => if theme.is_dark {
+            (
+                "Reverse",
+                Color32::from_rgb(38, 20, 52),
+                Color32::from_rgb(147, 51, 234),
+                Color32::from_rgb(216, 180, 254),
+                "Reverse forward (local -> remote)",
+            )
+        } else {
+            (
+                "Reverse",
+                Color32::from_rgb(243, 232, 255),
+                Color32::from_rgb(192, 132, 252),
+                Color32::from_rgb(107, 33, 168),
+                "Reverse forward (local -> remote)",
+            )
+        },
+    };
+
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(64.0, 22.0), egui::Sense::hover());
+    ui.painter().rect(
+        rect,
+        CornerRadius::same(5),
+        bg,
+        Stroke::new(1.0_f32, stroke_color),
+        StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        FontId::new(FONT_PILL, bold_family()),
+        fg,
+    );
+    resp.on_hover_text(tooltip);
+}
+
+fn header_row(ui: &mut egui::Ui, widths: &[f32; 7], theme: &ThemePalette) {
     let rect = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), ROW_H));
     ui.painter()
-        .rect_filled(rect, CornerRadius::same(5), HEADER_FILL);
+        .rect_filled(rect, CornerRadius::same(6), theme.header_fill);
     ui.horizontal(|ui| {
         ui.set_height(ROW_H);
         ui.add_space(ROW_INSET);
@@ -1027,23 +1648,23 @@ fn header_row(ui: &mut egui::Ui, widths: &[f32; 7]) {
                 }
                 ui.label(
                     RichText::new(title)
-                        .strong()
+                        .family(bold_family())
                         .size(FONT_HEADER)
-                        .color(Color32::from_rgb(186, 192, 200)),
+                        .color(theme.header_text),
                 );
             });
         }
     });
 }
 
-fn paint_row_bg(ui: &mut egui::Ui, row_i: usize) {
+fn paint_row_bg(ui: &mut egui::Ui, row_i: usize, theme: &ThemePalette) {
     let rect = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), ROW_H));
     if ui.rect_contains_pointer(rect) {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(5), ROW_HOVER);
+            .rect_filled(rect, CornerRadius::same(6), theme.row_hover);
     } else if row_i % 2 == 1 {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(5), ROW_STRIPE);
+            .rect_filled(rect, CornerRadius::same(6), theme.row_stripe);
     }
 }
 
@@ -1089,36 +1710,130 @@ fn tunnel_matches(tunnel: &crate::ports::Tunnel, filter: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn tunnel_status(tunnel: &crate::ports::Tunnel) -> (String, Color32) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StatusKind {
+    On,
+    Warn,
+    Error,
+    Off,
+}
+
+struct TunnelStatus<'a> {
+    label: &'static str,
+    kind: StatusKind,
+    tooltip: Option<&'a str>,
+}
+
+fn tunnel_status<'a>(tunnel: &'a crate::ports::Tunnel) -> TunnelStatus<'a> {
     if let Some(error) = &tunnel.error {
-        return (error.clone(), ERR_COLOR);
+        return TunnelStatus {
+            label: "failed",
+            kind: StatusKind::Error,
+            tooltip: Some(error.as_str()),
+        };
     }
     if tunnel.enabled {
-        ("ON".into(), ON_COLOR)
+        TunnelStatus {
+            label: "ON",
+            kind: StatusKind::On,
+            tooltip: None,
+        }
     } else if tunnel.manual_off {
-        ("MANUAL OFF".into(), MUTED)
+        TunnelStatus {
+            label: "MANUAL OFF",
+            kind: StatusKind::Off,
+            tooltip: None,
+        }
     } else if !tunnel.present {
-        ("TARGET DOWN".into(), WARN_COLOR)
+        TunnelStatus {
+            label: "TARGET DOWN",
+            kind: StatusKind::Warn,
+            tooltip: Some("Remote port is not currently listening"),
+        }
     } else {
-        ("off".into(), MUTED)
+        TunnelStatus {
+            label: "off",
+            kind: StatusKind::Off,
+            tooltip: None,
+        }
     }
 }
 
-fn status_pill(ui: &mut egui::Ui, text: &str, color: Color32) {
-    egui::Frame::new()
-        .fill(Color32::from_rgba_unmultiplied(
-            color.r(),
-            color.g(),
-            color.b(),
-            28,
-        ))
-        .stroke(Stroke::new(
-            1.0_f32,
-            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 90),
-        ))
-        .corner_radius(10)
-        .inner_margin(Margin::symmetric(8, 3))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).color(color).size(FONT_PILL).strong());
-        });
+fn status_pill(
+    ui: &mut egui::Ui,
+    text: &str,
+    theme: &ThemePalette,
+    kind: StatusKind,
+    tooltip: Option<&str>,
+) {
+    let (bg, stroke, fg) = match kind {
+        StatusKind::On => if theme.is_dark {
+            (
+                Color32::from_rgb(18, 48, 28),
+                Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)),
+                Color32::from_rgb(74, 222, 128),
+            )
+        } else {
+            (
+                Color32::from_rgb(220, 252, 231),
+                Stroke::new(1.0_f32, Color32::from_rgb(74, 222, 128)),
+                Color32::from_rgb(21, 128, 61),
+            )
+        },
+        StatusKind::Error => if theme.is_dark {
+            (
+                Color32::from_rgb(56, 18, 22),
+                Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)),
+                Color32::from_rgb(248, 113, 113),
+            )
+        } else {
+            (
+                Color32::from_rgb(254, 226, 226),
+                Stroke::new(1.0_f32, Color32::from_rgb(248, 113, 113)),
+                Color32::from_rgb(185, 28, 28),
+            )
+        },
+        StatusKind::Warn => if theme.is_dark {
+            (
+                Color32::from_rgb(52, 38, 14),
+                Stroke::new(1.0_f32, Color32::from_rgb(234, 179, 8)),
+                Color32::from_rgb(250, 204, 21),
+            )
+        } else {
+            (
+                Color32::from_rgb(254, 243, 199),
+                Stroke::new(1.0_f32, Color32::from_rgb(245, 158, 11)),
+                Color32::from_rgb(180, 83, 9),
+            )
+        },
+        StatusKind::Off => if theme.is_dark {
+            (
+                Color32::from_rgb(26, 30, 38),
+                Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
+                Color32::from_rgb(148, 163, 184),
+            )
+        } else {
+            (
+                Color32::from_rgb(241, 245, 249),
+                Stroke::new(1.0_f32, Color32::from_rgb(203, 213, 225)),
+                Color32::from_rgb(71, 85, 105),
+            )
+        },
+    };
+
+    let approx_char_w = 7.5_f32;
+    let pill_w = (text.chars().count() as f32 * approx_char_w + 16.0).max(46.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(pill_w, 22.0), egui::Sense::hover());
+    ui.painter()
+        .rect(rect, CornerRadius::same(5), bg, stroke, StrokeKind::Inside);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        FontId::new(FONT_PILL, bold_family()),
+        fg,
+    );
+    if let Some(tip) = tooltip {
+        resp.on_hover_text(tip);
+    }
 }

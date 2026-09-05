@@ -187,14 +187,14 @@ fn parse_ss_local_port(token: &str, include_loopback: bool) -> Option<u16> {
     is_discoverable_port(port).then_some(port)
 }
 
+pub const MIN_AUTO_FORWARD_PORT: u16 = 1024;
+
 /// Whether a remote TCP port should appear in discovery / auto-forward.
 ///
-/// High ports (`> 1024`) are always included. Privileged ports are limited to
-/// well-known **application** listeners (HTTP/HTTPS) so infrastructure noise
-/// like sshd (`22`) or DNS (`53`) stays hidden. Pure low-level services on
-/// other ≤1024 ports are not auto-forwarded; add them manually with `a` if needed.
+/// Ports at or above 1024 are included. Privileged ports (< 1024) are not
+/// auto-forwarded; add them manually if needed.
 pub fn is_discoverable_port(port: u16) -> bool {
-    port > 1024 || matches!(port, 80 | 443)
+    port >= MIN_AUTO_FORWARD_PORT
 }
 
 fn parse_ss_process(token: &str) -> Option<String> {
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn discovers_http_https_privileged_ports_but_not_infra() {
+    fn filters_privileged_ports_and_discovers_from_1024() {
         let input = concat!(
             "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n",
             "LISTEN 0 128 0.0.0.0:53 0.0.0.0:*\n",
@@ -302,15 +302,16 @@ mod tests {
                 .into_iter()
                 .map(|l| l.port)
                 .collect::<Vec<_>>(),
-            // 80/443 = app (HTTP/S); 22/53/1024 stay filtered; >1024 kept.
-            vec![80, 443, 1025, 8080]
+            // <1024 (22, 53, 80, 443) filtered; >=1024 kept.
+            vec![1024, 1025, 8080]
         );
-        assert!(is_discoverable_port(80));
-        assert!(is_discoverable_port(443));
+        assert!(!is_discoverable_port(80));
+        assert!(!is_discoverable_port(443));
+        assert!(is_discoverable_port(1024));
+        assert!(is_discoverable_port(1025));
         assert!(is_discoverable_port(3000));
         assert!(!is_discoverable_port(22));
         assert!(!is_discoverable_port(53));
-        assert!(!is_discoverable_port(1024));
     }
 
     #[test]
