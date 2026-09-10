@@ -45,4 +45,12 @@ pub enum Command {
         /// SSH destination (defaults to the last autotun session)
         destination: Option<String>,
     },
+    /// Download a remote file or image and open it on this machine
+    Open {
+        /// Remote path or file:// URL (defaults to the clipboard)
+        path: Option<String>,
+        /// SSH destination (defaults to the last autotun session)
+        #[arg(short, long)]
+        destination: Option<String>,
+    },
 }

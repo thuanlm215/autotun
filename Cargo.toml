@@ -2,7 +2,7 @@
 name = "autotun"
 version = "1.6.0"
 edition = "2024"
-description = "TUI/GUI for SSH port forwards over one connection, plus clipboard image upload for remote CLIs"
+description = "TUI/GUI for SSH port forwards over one connection, plus clipboard image upload and opening remote files locally"
 license = "MIT"
 repository = "https://github.com/thuanlm215/autotun"
 

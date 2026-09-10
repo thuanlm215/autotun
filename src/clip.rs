@@ -140,6 +140,23 @@ pub fn read_clipboard_png() -> Result<Vec<u8>> {
     Ok(data)
 }
 
+/// Read plain text from the system clipboard (wl-paste / xclip).
+pub fn read_clipboard_text() -> Result<String> {
+    let data = if env::var_os("WAYLAND_DISPLAY").is_some() && command_exists("wl-paste") {
+        run_clipboard_read(&["wl-paste", "--no-newline"])
+            .context("wl-paste could not read text from the clipboard")?
+    } else if command_exists("xclip") {
+        run_clipboard_read(&["xclip", "-selection", "clipboard", "-o"])
+            .context("xclip could not read text from the clipboard")?
+    } else if command_exists("wl-paste") {
+        run_clipboard_read(&["wl-paste", "--no-newline"])
+            .context("wl-paste could not read text from the clipboard")?
+    } else {
+        bail!("no clipboard tool found; install wl-clipboard (Wayland) or xclip (X11)");
+    };
+    String::from_utf8(data).context("clipboard does not contain UTF-8 text")
+}
+
 /// Copy text to the system clipboard (wl-copy / xclip) and via OSC 52.
 pub fn copy_text_to_clipboard(text: &str) {
     if env::var_os("WAYLAND_DISPLAY").is_some() && command_exists("wl-copy") {
@@ -154,7 +171,7 @@ pub fn copy_text_to_clipboard(text: &str) {
     let _ = io::stdout().flush();
 }
 
-fn control_is_alive(socket: &Path, destination: &str) -> bool {
+pub(crate) fn control_is_alive(socket: &Path, destination: &str) -> bool {
     Command::new("ssh")
         .args(["-S"])
         .arg(socket)
@@ -237,7 +254,7 @@ fn write_to_command(argv: &[&str], data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn command_exists(name: &str) -> bool {
+pub(crate) fn command_exists(name: &str) -> bool {
     Command::new("sh")
         .arg("-c")
         .arg(format!(

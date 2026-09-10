@@ -6,14 +6,23 @@ use autotun::{
     cli::{Cli, Command},
     clip,
     engine::Engine,
+    open,
 };
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    if let Some(Command::Clip { destination }) = cli.command {
-        let path = clip::send_clipboard_image(destination)?;
-        println!("{path}");
-        return Ok(());
+    match cli.command {
+        Some(Command::Clip { destination }) => {
+            let path = clip::send_clipboard_image(destination)?;
+            println!("{path}");
+            return Ok(());
+        }
+        Some(Command::Open { path, destination }) => {
+            let local = open::open_remote_file(destination, path)?;
+            println!("{}", local.display());
+            return Ok(());
+        }
+        None => {}
     }
     if cli.gui {
         return launch_gui(&cli);

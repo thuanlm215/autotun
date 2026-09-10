@@ -9,7 +9,8 @@ managing SSH port forwards over a single OpenSSH connection. It watches TCP
 listeners on a remote host, forwards them to local loopback by default, and
 lets you add, edit, toggle, or reverse tunnels without reconnecting. It can
 also send a local screenshot to the remote host as a file so you can paste
-the path into an SSH AI CLI.
+the path into an SSH AI CLI, and pull a remote file or image back to open it
+on this machine.
 
 Existing SSH configuration works as usual: aliases, keys, agents, `ProxyJump`,
 and custom options.
@@ -35,6 +36,8 @@ and custom options.
 - Inline multi-line add/edit forms; help bar toggle with `?`.
 - Forwards a local clipboard PNG to `/tmp/autotun-clip-*.png` on the remote
   host (`p` / **Send screenshot** / `autotun clip`) for pasting into an AI CLI.
+- Opens a remote file or image on this machine (`o` / paste + **Open** /
+  `autotun open`) over the same SSH session.
 - In the desktop GUI, launches remote Wayland applications through Waypipe so
   their windows appear on the local desktop.
 - Static Linux binaries for x86-64 and ARM64. Optional desktop GUI.
@@ -214,6 +217,26 @@ sudo pacman -S wl-clipboard
 sudo pacman -S xclip
 ```
 
+### Remote file → local viewer
+
+A remote AI CLI can print a path the local desktop cannot see. Paste that path
+(or a `file://` URL) into autotun; it downloads the file over the live SSH
+session and opens it with the local default app.
+
+```sh
+# While autotun is connected:
+autotun open /home/you/.grok/sessions/.../images/1.jpg
+
+# Or copy the path, then:
+autotun open
+```
+
+In the TUI press `o`, paste if needed, then Enter. In the GUI open the
+**Remote Apps** tab, paste into **Open file**, and select **Open**. Empty
+input uses the clipboard. The copy is written under
+`$XDG_RUNTIME_DIR/autotun/` (mode `600`) and opened with `xdg-open`. Files
+larger than 64 MiB are rejected.
+
 Run `autotun --help` for the full CLI reference.
 
 ## Controls
@@ -230,6 +253,7 @@ Help is shown by default. Press `?` to hide or show it.
 | `d` | Remove a manual tunnel, or ignore a discovered one for this session |
 | `r` | Rescan remote listeners now |
 | `p` | Send the local clipboard image to the remote host and copy the path |
+| `o` | Open a remote file or image on this machine (paste a path or `file://` URL) |
 | `c` | Copy the selected tunnel URL |
 | `/` | Filter |
 | `?` | Toggle the help bar |

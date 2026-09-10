@@ -423,12 +423,7 @@ mod tests {
         let mut tunnels = Vec::new();
         apply_scan_in_memory(
             &mut tunnels,
-            &[
-                listener(80),
-                listener(443),
-                listener(1024),
-                listener(8080),
-            ],
+            &[listener(80), listener(443), listener(1024), listener(8080)],
             true,
         );
         assert_eq!(tunnels.len(), 4);

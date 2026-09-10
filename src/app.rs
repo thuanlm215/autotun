@@ -3,7 +3,10 @@ use std::{io, time::Duration};
 use anyhow::Result;
 use crossterm::{
     cursor::Show,
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind,
+        KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -90,7 +93,12 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, Show);
+        let _ = execute!(
+            io::stdout(),
+            DisableBracketedPaste,
+            LeaveAlternateScreen,
+            Show
+        );
     }
 }
 
@@ -106,11 +114,12 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let _terminal_guard = TerminalGuard;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))?;
 
     let mut form = None::<InlineForm>;
+    let mut open_form = None::<String>;
     let mut show_help = false;
     let mut filter = None::<String>;
 
@@ -146,7 +155,13 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
         }
 
         terminal.draw(|frame| {
-            let form_height = if form.is_some() { 5 } else { 0 };
+            let form_height = if form.is_some() {
+                5
+            } else if open_form.is_some() {
+                3
+            } else {
+                0
+            };
             let filter_height = if filter.is_some() { 3 } else { 0 };
             let areas = Layout::vertical([
                 Constraint::Min(3),
@@ -294,6 +309,27 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
                         .block(Block::default().title(form.title()).borders(Borders::ALL)),
                     areas[1],
                 );
+            } else if let Some(path) = &open_form {
+                let display = if path.is_empty() {
+                    "path or file:// URL"
+                } else {
+                    path.as_str()
+                };
+                let content = format!("Remote: {display}");
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        content,
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )))
+                    .block(
+                        Block::default()
+                            .title(" Open remote file ")
+                            .borders(Borders::ALL),
+                    ),
+                    areas[1],
+                );
             }
 
             if let Some(query) = &filter {
@@ -311,13 +347,19 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
 
             let footer = if form.is_some() {
                 format!("{gutter_pad}{}", InlineForm::help_line())
+            } else if open_form.is_some() {
+                if let Some(notice) = engine.notice() {
+                    format!("{gutter_pad}{notice}")
+                } else {
+                    format!("{gutter_pad}Paste path  Enter Open  Ctrl+V Clipboard  Esc Cancel")
+                }
             } else if filter.is_some() {
                 format!("{gutter_pad}Type to filter  Esc Clear  Enter Confirm")
             } else if let Some(notice) = engine.notice() {
                 format!("{gutter_pad}{notice}")
             } else if show_help {
                 format!(
-                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  p Fwd image  c Copy URL  / Filter  ? Help  q Quit"
+                    "{gutter_pad}↑↓ Select  Space Toggle  a Forward  v Reverse  e Edit  d Remove  r Rescan  p Fwd image  o Open remote  c Copy URL  / Filter  ? Help  q Quit"
                 )
             } else {
                 format!("{gutter_pad}? Help")
@@ -329,117 +371,165 @@ fn run_tui(engine: &mut Engine) -> Result<()> {
         })?;
 
         if event::poll(Duration::from_millis(250))? {
-            let Event::Key(key) = event::read()? else {
-                continue;
-            };
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
-            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(());
-            }
-            if let Some(active_form) = form.as_mut() {
-                match handle_inline_form(key.code, active_form) {
-                    Ok(Some(tunnel)) => {
-                        if let Some(index) = active_form.edit_index {
-                            engine.edit(index, tunnel, active_form.was_enabled);
-                        } else {
-                            let added = engine.add(tunnel);
-                            // Select the new row in the unfiltered list if visible.
-                            if let Some(pos) = visible_indices.iter().position(|&i| i == added) {
-                                state.select(Some(pos));
-                            } else {
-                                state.select(Some(added));
+            match event::read()? {
+                Event::Paste(text) => {
+                    if let Some(active_form) = form.as_mut() {
+                        active_form.fields[active_form.selected].push_str(&text);
+                    } else if let Some(path) = open_form.as_mut() {
+                        *path = text;
+                    } else if let Some(query) = filter.as_mut() {
+                        query.push_str(&text);
+                    }
+                }
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        return Ok(());
+                    }
+                    if let Some(active_form) = form.as_mut() {
+                        match handle_inline_form(key.code, active_form) {
+                            Ok(Some(tunnel)) => {
+                                if let Some(index) = active_form.edit_index {
+                                    engine.edit(index, tunnel, active_form.was_enabled);
+                                } else {
+                                    let added = engine.add(tunnel);
+                                    if let Some(pos) =
+                                        visible_indices.iter().position(|&i| i == added)
+                                    {
+                                        state.select(Some(pos));
+                                    } else {
+                                        state.select(Some(added));
+                                    }
+                                }
+                                form = None;
                             }
+                            Ok(None) => {}
+                            Err(_) => {}
                         }
-                        form = None;
-                    }
-                    Ok(None) => {}
-                    Err(_) => {}
-                }
-                if matches!(key.code, KeyCode::Esc) {
-                    form = None;
-                }
-            } else if let Some(query) = filter.as_mut() {
-                match key.code {
-                    KeyCode::Esc => {
-                        filter = None;
-                    }
-                    KeyCode::Enter => {
-                        if query.is_empty() {
-                            filter = None;
+                        if matches!(key.code, KeyCode::Esc) {
+                            form = None;
                         }
-                    }
-                    KeyCode::Backspace => {
-                        query.pop();
-                        if query.is_empty() {
-                            filter = None;
-                        }
-                    }
-                    KeyCode::Char(c) => {
-                        query.push(c);
-                    }
-                    _ => {}
-                }
-            } else {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Esc => engine.clear_notice(),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        move_selection(&mut state, visible_indices.len(), 1)
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        move_selection(&mut state, visible_indices.len(), -1)
-                    }
-                    KeyCode::Char(' ') => {
-                        if let Some(vi) = state.selected()
-                            && let Some(&i) = visible_indices.get(vi)
-                        {
-                            engine.toggle(i);
-                        }
-                    }
-                    KeyCode::Enter | KeyCode::Char('e') => {
-                        if let Some(vi) = state.selected()
-                            && let Some(&i) = visible_indices.get(vi)
-                        {
-                            form = Some(InlineForm::edit(&engine.tunnels()[i], i));
-                        }
-                    }
-                    KeyCode::Char('a') => form = Some(InlineForm::new(Direction::Local)),
-                    KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
-                    KeyCode::Char('d') => {
-                        if let Some(vi) = state.selected()
-                            && let Some(&i) = visible_indices.get(vi)
-                        {
-                            engine.delete(i);
-                            if engine.tunnels().is_empty() {
-                                state.select(None);
+                    } else if open_form.is_some() {
+                        match key.code {
+                            KeyCode::Esc => open_form = None,
+                            KeyCode::Enter => {
+                                let spec = open_form.as_deref().unwrap_or("").to_owned();
+                                if engine.open_remote_file(&spec).is_ok() {
+                                    open_form = None;
+                                }
                             }
-                        }
-                    }
-                    KeyCode::Char('r') => engine.rescan(),
-                    KeyCode::Char('p') => {
-                        let _ = engine.push_clipboard_image();
-                    }
-                    KeyCode::Char('/') => {
-                        filter = Some(String::new());
-                    }
-                    KeyCode::Char('c') => {
-                        if let Some(vi) = state.selected()
-                            && let Some(&i) = visible_indices.get(vi)
-                        {
-                            let url = engine::tunnel_url(&engine.tunnels()[i]);
-                            if url != "—" {
-                                crate::clip::copy_text_to_clipboard(&url);
+                            KeyCode::Backspace => {
+                                if let Some(path) = open_form.as_mut() {
+                                    path.pop();
+                                }
                             }
+                            KeyCode::Char('v') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if let (Some(path), Ok(text)) =
+                                    (open_form.as_mut(), crate::clip::read_clipboard_text())
+                                {
+                                    *path = text;
+                                }
+                            }
+                            KeyCode::Char(character)
+                                if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                if let Some(path) = open_form.as_mut() {
+                                    path.push(character);
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if let Some(query) = filter.as_mut() {
+                        match key.code {
+                            KeyCode::Esc => {
+                                filter = None;
+                            }
+                            KeyCode::Enter => {
+                                if query.is_empty() {
+                                    filter = None;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                query.pop();
+                                if query.is_empty() {
+                                    filter = None;
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                query.push(c);
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') => return Ok(()),
+                            KeyCode::Esc => engine.clear_notice(),
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                move_selection(&mut state, visible_indices.len(), 1)
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                move_selection(&mut state, visible_indices.len(), -1)
+                            }
+                            KeyCode::Char(' ') => {
+                                if let Some(vi) = state.selected()
+                                    && let Some(&i) = visible_indices.get(vi)
+                                {
+                                    engine.toggle(i);
+                                }
+                            }
+                            KeyCode::Enter | KeyCode::Char('e') => {
+                                if let Some(vi) = state.selected()
+                                    && let Some(&i) = visible_indices.get(vi)
+                                {
+                                    form = Some(InlineForm::edit(&engine.tunnels()[i], i));
+                                }
+                            }
+                            KeyCode::Char('a') => form = Some(InlineForm::new(Direction::Local)),
+                            KeyCode::Char('v') => form = Some(InlineForm::new(Direction::Reverse)),
+                            KeyCode::Char('d') => {
+                                if let Some(vi) = state.selected()
+                                    && let Some(&i) = visible_indices.get(vi)
+                                {
+                                    engine.delete(i);
+                                    if engine.tunnels().is_empty() {
+                                        state.select(None);
+                                    }
+                                }
+                            }
+                            KeyCode::Char('r') => engine.rescan(),
+                            KeyCode::Char('p') => {
+                                let _ = engine.push_clipboard_image();
+                            }
+                            KeyCode::Char('o') => {
+                                let prefill = crate::clip::read_clipboard_text()
+                                    .ok()
+                                    .and_then(|text| crate::open::parse_remote_ref(&text).ok())
+                                    .unwrap_or_default();
+                                open_form = Some(prefill);
+                            }
+                            KeyCode::Char('/') => {
+                                filter = Some(String::new());
+                            }
+                            KeyCode::Char('c') => {
+                                if let Some(vi) = state.selected()
+                                    && let Some(&i) = visible_indices.get(vi)
+                                {
+                                    let url = engine::tunnel_url(&engine.tunnels()[i]);
+                                    if url != "—" {
+                                        crate::clip::copy_text_to_clipboard(&url);
+                                    }
+                                }
+                            }
+                            KeyCode::Char('?') => {
+                                engine.clear_notice();
+                                show_help = !show_help;
+                            }
+                            _ => {}
                         }
                     }
-                    KeyCode::Char('?') => {
-                        engine.clear_notice();
-                        show_help = !show_help;
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
     }

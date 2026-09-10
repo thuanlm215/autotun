@@ -283,6 +283,7 @@ struct SessionUi {
     form: Option<FormUi>,
     form_error: Option<String>,
     clip_notice: Option<ClipNotice>,
+    open_path: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -302,6 +303,7 @@ impl Drop for SessionUi {
 
 enum ClipNotice {
     Success(String),
+    Opened(String),
     Error(String),
 }
 
@@ -400,6 +402,7 @@ impl GuiApp {
                     form: None,
                     form_error: None,
                     clip_notice: None,
+                    open_path: String::new(),
                 });
             }
             Err(error) => self.connect_error = Some(format!("{error:#}")),
@@ -722,14 +725,20 @@ fn remote_apps_panel(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePa
                     .size(18.0),
             );
             ui.label(
-                RichText::new("Launch a Wayland app on the VM through Waypipe.")
-                    .color(theme.text_muted)
-                    .size(12.5),
+                RichText::new(
+                    "Open a remote file on this machine, or launch a Wayland app through Waypipe.",
+                )
+                .color(theme.text_muted)
+                .size(12.5),
             );
         });
     });
     ui.add_space(8.0);
+    open_file_card(ui, session, theme);
+    ui.add_space(10.0);
     theme.card().show(ui, |ui| {
+        ui.label(RichText::new("Launch app").strong().size(13.0));
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Command").strong().size(13.0));
             let response = ui.add(
@@ -947,7 +956,6 @@ fn session_tabs(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette
         });
 }
 
-
 fn remote_app_summary(details: &str) -> String {
     let preferred = [
         "Failed to execvp",
@@ -961,13 +969,21 @@ fn remote_app_summary(details: &str) -> String {
     .trim();
     const LIMIT: usize = 112;
     if preferred.chars().count() > LIMIT {
-        format!("{}...", preferred.chars().take(LIMIT - 3).collect::<String>())
+        format!(
+            "{}...",
+            preferred.chars().take(LIMIT - 3).collect::<String>()
+        )
     } else {
         preferred.to_owned()
     }
 }
 
-fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool, theme: &ThemePalette) {
+fn header_bar(
+    ui: &mut egui::Ui,
+    session: &mut SessionUi,
+    disconnect: &mut bool,
+    theme: &ThemePalette,
+) {
     ui.horizontal(|ui| {
         ui.heading(
             RichText::new("autotun")
@@ -1006,10 +1022,7 @@ fn header_bar(ui: &mut egui::Ui, session: &mut SessionUi, disconnect: &mut bool,
                 });
             });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui
-                .add(theme.danger_button("Disconnect"))
-                .clicked()
-            {
+            if ui.add(theme.danger_button("Disconnect")).clicked() {
                 *disconnect = true;
             }
             if ui
@@ -1044,10 +1057,7 @@ fn filter_bar(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) 
                 .hint_text(theme.hint("Search port or label...")),
         );
         if !session.filter.is_empty()
-            && ui
-                .small_button("×")
-                .on_hover_text("Clear filter")
-                .clicked()
+            && ui.small_button("×").on_hover_text("Clear filter").clicked()
         {
             session.filter.clear();
         }
@@ -1143,14 +1153,12 @@ fn apply_theme(ctx: &egui::Context, theme: &ThemePalette) {
         TextStyle::Body,
         FontId::new(FONT_BODY, FontFamily::Proportional),
     );
-    style.text_styles.insert(
-        TextStyle::Button,
-        FontId::new(13.5, bold_family()),
-    );
-    style.text_styles.insert(
-        TextStyle::Heading,
-        FontId::new(20.0, bold_family()),
-    );
+    style
+        .text_styles
+        .insert(TextStyle::Button, FontId::new(13.5, bold_family()));
+    style
+        .text_styles
+        .insert(TextStyle::Heading, FontId::new(20.0, bold_family()));
     style.text_styles.insert(
         TextStyle::Monospace,
         FontId::new(13.5, FontFamily::Monospace),
@@ -1218,7 +1226,9 @@ fn author_footer(ui: &mut egui::Ui, theme: &ThemePalette) {
         ui.spacing_mut().item_spacing.x = 6.0;
         ui.label(RichText::new("by").color(theme.text_muted).size(12.0));
         ui.hyperlink_to(
-            RichText::new(AUTHOR_NAME).color(theme.clip_color).size(12.0),
+            RichText::new(AUTHOR_NAME)
+                .color(theme.clip_color)
+                .size(12.0),
             AUTHOR_URL,
         );
         ui.label(RichText::new("•").color(theme.card_stroke).size(12.0));
@@ -1255,10 +1265,7 @@ fn theme_switcher(ui: &mut egui::Ui, theme_mode: &mut ThemeMode, theme: &ThemePa
                         (Color32::TRANSPARENT, theme.text_muted)
                     };
                     let btn = egui::Button::new(
-                        RichText::new(label)
-                            .size(11.5)
-                            .color(text_color)
-                            .strong(),
+                        RichText::new(label).size(11.5).color(text_color).strong(),
                     )
                     .fill(fill)
                     .corner_radius(4);
@@ -1278,46 +1285,96 @@ fn theme_switcher(ui: &mut egui::Ui, theme_mode: &mut ThemeMode, theme: &ThemePa
         });
 }
 
+fn open_file_card(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
+    theme.card().show(ui, |ui| {
+        ui.label(RichText::new("Open file").strong().size(13.0));
+        ui.label(
+            RichText::new(
+                "Paste a remote path or file:// URL. Downloads over SSH and opens locally.",
+            )
+            .color(theme.text_muted)
+            .size(12.0),
+        );
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut session.open_path)
+                    .desired_width((ui.available_width() - 88.0).max(200.0))
+                    .hint_text(theme.hint("/home/you/.grok/sessions/.../images/1.jpg"))
+                    .font(FontId::monospace(13.0)),
+            );
+            let enter =
+                response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+            if ui
+                .add(theme.primary_button("Open"))
+                .on_hover_text("Download the remote file over SSH and open it locally")
+                .clicked()
+                || enter
+            {
+                let spec = session.open_path.clone();
+                match session.engine.open_remote_file(&spec) {
+                    Ok(path) => {
+                        session.clip_notice = Some(ClipNotice::Opened(path.display().to_string()));
+                        session.open_path.clear();
+                    }
+                    Err(error) => {
+                        session.clip_notice = Some(ClipNotice::Error(format!("{error:#}")));
+                    }
+                }
+            }
+        });
+    });
+}
 
 fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette) {
     let Some(notice) = &session.clip_notice else {
         return;
     };
     let (fill, stroke, tag, tag_bg, text_color) = match notice {
-        ClipNotice::Success(_) => if theme.is_dark {
-            (
-                Color32::from_rgb(20, 34, 42),
-                Color32::from_rgb(38, 86, 108),
-                "COPIED",
-                Color32::from_rgb(14, 116, 144),
-                theme.clip_color,
-            )
-        } else {
-            (
-                Color32::from_rgb(240, 249, 255),
-                Color32::from_rgb(186, 230, 253),
-                "COPIED",
-                Color32::from_rgb(2, 132, 199),
-                Color32::from_rgb(3, 105, 161),
-            )
-        },
-        ClipNotice::Error(_) => if theme.is_dark {
-            (
-                Color32::from_rgb(44, 22, 26),
-                Color32::from_rgb(118, 44, 52),
-                "ERROR",
-                Color32::from_rgb(185, 28, 28),
-                theme.err_color,
-            )
-        } else {
-            (
-                Color32::from_rgb(254, 242, 242),
-                Color32::from_rgb(254, 202, 202),
-                "ERROR",
-                Color32::from_rgb(220, 38, 38),
-                Color32::from_rgb(185, 28, 28),
-            )
-        },
+        ClipNotice::Success(_) | ClipNotice::Opened(_) => {
+            if theme.is_dark {
+                (
+                    Color32::from_rgb(20, 34, 42),
+                    Color32::from_rgb(38, 86, 108),
+                    match notice {
+                        ClipNotice::Opened(_) => "OPENED",
+                        _ => "COPIED",
+                    },
+                    Color32::from_rgb(14, 116, 144),
+                    theme.clip_color,
+                )
+            } else {
+                (
+                    Color32::from_rgb(240, 249, 255),
+                    Color32::from_rgb(186, 230, 253),
+                    match notice {
+                        ClipNotice::Opened(_) => "OPENED",
+                        _ => "COPIED",
+                    },
+                    Color32::from_rgb(2, 132, 199),
+                    Color32::from_rgb(3, 105, 161),
+                )
+            }
+        }
+        ClipNotice::Error(_) => {
+            if theme.is_dark {
+                (
+                    Color32::from_rgb(44, 22, 26),
+                    Color32::from_rgb(118, 44, 52),
+                    "ERROR",
+                    Color32::from_rgb(185, 28, 28),
+                    theme.err_color,
+                )
+            } else {
+                (
+                    Color32::from_rgb(254, 242, 242),
+                    Color32::from_rgb(254, 202, 202),
+                    "ERROR",
+                    Color32::from_rgb(220, 38, 38),
+                    Color32::from_rgb(185, 28, 28),
+                )
+            }
+        }
     };
     let mut dismiss = false;
     egui::Frame::new()
@@ -1332,21 +1389,13 @@ fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette)
                     .corner_radius(4)
                     .inner_margin(Margin::symmetric(6, 2))
                     .show(ui, |ui| {
-                        ui.label(
-                            RichText::new(tag)
-                                .color(Color32::WHITE)
-                                .size(11.0)
-                                .strong(),
-                        );
+                        ui.label(RichText::new(tag).color(Color32::WHITE).size(11.0).strong());
                     });
                 match notice {
                     ClipNotice::Success(path) => {
                         ui.add(
                             egui::Label::new(
-                                RichText::new(path)
-                                    .color(text_color)
-                                    .monospace()
-                                    .size(13.0),
+                                RichText::new(path).color(text_color).monospace().size(13.0),
                             )
                             .selectable(true),
                         );
@@ -1359,10 +1408,25 @@ fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette)
                             ui.ctx().copy_text(path.clone());
                         }
                     }
+                    ClipNotice::Opened(path) => {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(path).color(text_color).monospace().size(13.0),
+                            )
+                            .selectable(true),
+                        );
+                        ui.label(
+                            RichText::new("(opened on this machine)")
+                                .color(theme.text_muted)
+                                .size(12.0),
+                        );
+                    }
                     ClipNotice::Error(error) => {
                         ui.add(
-                            egui::Label::new(RichText::new(error).color(theme.err_color).size(13.0))
-                                .selectable(true),
+                            egui::Label::new(
+                                RichText::new(error).color(theme.err_color).size(13.0),
+                            )
+                            .selectable(true),
                         );
                     }
                 }
@@ -1378,7 +1442,12 @@ fn clip_banner(ui: &mut egui::Ui, session: &mut SessionUi, theme: &ThemePalette)
     }
 }
 
-fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], theme: &ThemePalette) {
+fn tunnel_table(
+    ui: &mut egui::Ui,
+    session: &mut SessionUi,
+    visible: &[usize],
+    theme: &ThemePalette,
+) {
     let remaining = ui.available_height();
     egui::Frame::new()
         .fill(theme.table_fill)
@@ -1452,9 +1521,7 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], t
                                     ui.label(RichText::new("—").color(theme.text_muted));
                                 } else {
                                     ui.label(
-                                        RichText::new(label)
-                                            .color(theme.text_primary)
-                                            .size(13.5),
+                                        RichText::new(label).color(theme.text_primary).size(13.5),
                                     );
                                 }
                             });
@@ -1478,19 +1545,14 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], t
                                 if url == "—" {
                                     ui.label(RichText::new("—").color(theme.text_muted));
                                 } else if ui
-                                    .add(
-                                        egui::Link::new(
-                                            RichText::new(&url)
-                                                .color(theme.clip_color)
-                                                .size(13.0),
-                                        ),
-                                    )
+                                    .add(egui::Link::new(
+                                        RichText::new(&url).color(theme.clip_color).size(13.0),
+                                    ))
                                     .on_hover_text("Open in browser")
                                     .clicked()
                                 {
-                                    let _ = std::process::Command::new("xdg-open")
-                                        .arg(&url)
-                                        .spawn();
+                                    let _ =
+                                        std::process::Command::new("xdg-open").arg(&url).spawn();
                                 }
                             });
                             cell(ui, widths[5], |ui| {
@@ -1498,28 +1560,29 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], t
                             });
                             cell(ui, widths[6], |ui| {
                                 ui.spacing_mut().item_spacing.x = 5.0;
-                                let (toggle_label, toggle_fill, toggle_stroke, toggle_fg) = if tunnel.enabled {
-                                    (
-                                        "Off",
-                                        theme.badge_bg,
-                                        Stroke::new(1.0_f32, theme.card_stroke),
-                                        theme.text_muted,
-                                    )
-                                } else if theme.is_dark {
-                                    (
-                                        "On",
-                                        Color32::from_rgb(20, 50, 32),
-                                        Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)),
-                                        Color32::from_rgb(74, 222, 128),
-                                    )
-                                } else {
-                                    (
-                                        "On",
-                                        Color32::from_rgb(220, 252, 231),
-                                        Stroke::new(1.0_f32, Color32::from_rgb(74, 222, 128)),
-                                        Color32::from_rgb(21, 128, 61),
-                                    )
-                                };
+                                let (toggle_label, toggle_fill, toggle_stroke, toggle_fg) =
+                                    if tunnel.enabled {
+                                        (
+                                            "Off",
+                                            theme.badge_bg,
+                                            Stroke::new(1.0_f32, theme.card_stroke),
+                                            theme.text_muted,
+                                        )
+                                    } else if theme.is_dark {
+                                        (
+                                            "On",
+                                            Color32::from_rgb(20, 50, 32),
+                                            Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)),
+                                            Color32::from_rgb(74, 222, 128),
+                                        )
+                                    } else {
+                                        (
+                                            "On",
+                                            Color32::from_rgb(220, 252, 231),
+                                            Stroke::new(1.0_f32, Color32::from_rgb(74, 222, 128)),
+                                            Color32::from_rgb(21, 128, 61),
+                                        )
+                                    };
                                 if ui
                                     .add(
                                         egui::Button::new(
@@ -1552,10 +1615,7 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], t
                                 {
                                     action = Some(RowAction::Edit(index));
                                 }
-                                if ui
-                                    .add(theme.danger_button("Remove"))
-                                    .clicked()
-                                {
+                                if ui.add(theme.danger_button("Remove")).clicked() {
                                     action = Some(RowAction::Delete(index));
                                 }
                             });
@@ -1577,40 +1637,44 @@ fn tunnel_table(ui: &mut egui::Ui, session: &mut SessionUi, visible: &[usize], t
 
 fn direction_pill(ui: &mut egui::Ui, direction: Direction, theme: &ThemePalette) {
     let (text, bg, stroke_color, fg, tooltip) = match direction {
-        Direction::Local => if theme.is_dark {
-            (
-                "Local",
-                Color32::from_rgb(14, 38, 54),
-                Color32::from_rgb(2, 132, 199),
-                Color32::from_rgb(56, 189, 248),
-                "Local forward (remote -> local)",
-            )
-        } else {
-            (
-                "Local",
-                Color32::from_rgb(224, 242, 254),
-                Color32::from_rgb(56, 189, 248),
-                Color32::from_rgb(3, 105, 161),
-                "Local forward (remote -> local)",
-            )
-        },
-        Direction::Reverse => if theme.is_dark {
-            (
-                "Reverse",
-                Color32::from_rgb(38, 20, 52),
-                Color32::from_rgb(147, 51, 234),
-                Color32::from_rgb(216, 180, 254),
-                "Reverse forward (local -> remote)",
-            )
-        } else {
-            (
-                "Reverse",
-                Color32::from_rgb(243, 232, 255),
-                Color32::from_rgb(192, 132, 252),
-                Color32::from_rgb(107, 33, 168),
-                "Reverse forward (local -> remote)",
-            )
-        },
+        Direction::Local => {
+            if theme.is_dark {
+                (
+                    "Local",
+                    Color32::from_rgb(14, 38, 54),
+                    Color32::from_rgb(2, 132, 199),
+                    Color32::from_rgb(56, 189, 248),
+                    "Local forward (remote -> local)",
+                )
+            } else {
+                (
+                    "Local",
+                    Color32::from_rgb(224, 242, 254),
+                    Color32::from_rgb(56, 189, 248),
+                    Color32::from_rgb(3, 105, 161),
+                    "Local forward (remote -> local)",
+                )
+            }
+        }
+        Direction::Reverse => {
+            if theme.is_dark {
+                (
+                    "Reverse",
+                    Color32::from_rgb(38, 20, 52),
+                    Color32::from_rgb(147, 51, 234),
+                    Color32::from_rgb(216, 180, 254),
+                    "Reverse forward (local -> remote)",
+                )
+            } else {
+                (
+                    "Reverse",
+                    Color32::from_rgb(243, 232, 255),
+                    Color32::from_rgb(192, 132, 252),
+                    Color32::from_rgb(107, 33, 168),
+                    "Reverse forward (local -> remote)",
+                )
+            }
+        }
     };
 
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(64.0, 22.0), egui::Sense::hover());
@@ -1767,58 +1831,66 @@ fn status_pill(
     tooltip: Option<&str>,
 ) {
     let (bg, stroke, fg) = match kind {
-        StatusKind::On => if theme.is_dark {
-            (
-                Color32::from_rgb(18, 48, 28),
-                Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)),
-                Color32::from_rgb(74, 222, 128),
-            )
-        } else {
-            (
-                Color32::from_rgb(220, 252, 231),
-                Stroke::new(1.0_f32, Color32::from_rgb(74, 222, 128)),
-                Color32::from_rgb(21, 128, 61),
-            )
-        },
-        StatusKind::Error => if theme.is_dark {
-            (
-                Color32::from_rgb(56, 18, 22),
-                Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)),
-                Color32::from_rgb(248, 113, 113),
-            )
-        } else {
-            (
-                Color32::from_rgb(254, 226, 226),
-                Stroke::new(1.0_f32, Color32::from_rgb(248, 113, 113)),
-                Color32::from_rgb(185, 28, 28),
-            )
-        },
-        StatusKind::Warn => if theme.is_dark {
-            (
-                Color32::from_rgb(52, 38, 14),
-                Stroke::new(1.0_f32, Color32::from_rgb(234, 179, 8)),
-                Color32::from_rgb(250, 204, 21),
-            )
-        } else {
-            (
-                Color32::from_rgb(254, 243, 199),
-                Stroke::new(1.0_f32, Color32::from_rgb(245, 158, 11)),
-                Color32::from_rgb(180, 83, 9),
-            )
-        },
-        StatusKind::Off => if theme.is_dark {
-            (
-                Color32::from_rgb(26, 30, 38),
-                Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
-                Color32::from_rgb(148, 163, 184),
-            )
-        } else {
-            (
-                Color32::from_rgb(241, 245, 249),
-                Stroke::new(1.0_f32, Color32::from_rgb(203, 213, 225)),
-                Color32::from_rgb(71, 85, 105),
-            )
-        },
+        StatusKind::On => {
+            if theme.is_dark {
+                (
+                    Color32::from_rgb(18, 48, 28),
+                    Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)),
+                    Color32::from_rgb(74, 222, 128),
+                )
+            } else {
+                (
+                    Color32::from_rgb(220, 252, 231),
+                    Stroke::new(1.0_f32, Color32::from_rgb(74, 222, 128)),
+                    Color32::from_rgb(21, 128, 61),
+                )
+            }
+        }
+        StatusKind::Error => {
+            if theme.is_dark {
+                (
+                    Color32::from_rgb(56, 18, 22),
+                    Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)),
+                    Color32::from_rgb(248, 113, 113),
+                )
+            } else {
+                (
+                    Color32::from_rgb(254, 226, 226),
+                    Stroke::new(1.0_f32, Color32::from_rgb(248, 113, 113)),
+                    Color32::from_rgb(185, 28, 28),
+                )
+            }
+        }
+        StatusKind::Warn => {
+            if theme.is_dark {
+                (
+                    Color32::from_rgb(52, 38, 14),
+                    Stroke::new(1.0_f32, Color32::from_rgb(234, 179, 8)),
+                    Color32::from_rgb(250, 204, 21),
+                )
+            } else {
+                (
+                    Color32::from_rgb(254, 243, 199),
+                    Stroke::new(1.0_f32, Color32::from_rgb(245, 158, 11)),
+                    Color32::from_rgb(180, 83, 9),
+                )
+            }
+        }
+        StatusKind::Off => {
+            if theme.is_dark {
+                (
+                    Color32::from_rgb(26, 30, 38),
+                    Stroke::new(1.0_f32, Color32::from_rgb(51, 65, 85)),
+                    Color32::from_rgb(148, 163, 184),
+                )
+            } else {
+                (
+                    Color32::from_rgb(241, 245, 249),
+                    Stroke::new(1.0_f32, Color32::from_rgb(203, 213, 225)),
+                    Color32::from_rgb(71, 85, 105),
+                )
+            }
+        }
     };
 
     let approx_char_w = 7.5_f32;

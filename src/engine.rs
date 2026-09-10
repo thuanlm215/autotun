@@ -6,6 +6,7 @@
 use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -175,6 +176,25 @@ impl Engine {
     pub fn clear_notice(&mut self) {
         self.last_notice = None;
         self.notice_until = None;
+    }
+
+    /// Download a remote file (path, file:// URL, or clipboard) and open it locally.
+    pub fn open_remote_file(&mut self, spec: &str) -> Result<PathBuf> {
+        let result = crate::open::open_remote_on_session(
+            self.session.destination(),
+            self.session.socket(),
+            spec,
+        );
+        match result {
+            Ok(path) => {
+                self.set_notice(format!("opened {}", path.display()));
+                Ok(path)
+            }
+            Err(error) => {
+                self.set_notice(format!("open failed: {error:#}"));
+                Err(error)
+            }
+        }
     }
 
     /// Upload the local clipboard PNG and copy the remote path for the AI CLI.
